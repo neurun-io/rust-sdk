@@ -1,0 +1,191 @@
+syntax = "proto3";
+
+package neurun.browser.v1;
+
+option go_package = "github.com/neurun-io/neurun/internal/browserpb;browserpb";
+
+// BrowserService opens a browser and hands back the endpoint to drive it on.
+// It holds no database: the caller owns persistence.
+service BrowserService {
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+// BrowserKind is what gets launched. Identity.brand is what it claims to be,
+// which is a different question: a Chrome process can present as Edge.
+enum BrowserKind {
+  BROWSER_KIND_UNSPECIFIED = 0;
+  BROWSER_KIND_CHROME = 1;
+  BROWSER_KIND_FIREFOX = 2;
+}
+
+// Protocol names what the returned endpoint speaks.
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  PROTOCOL_CDP = 1;
+  PROTOCOL_BIDI = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Presentation. Mirrors rustenium-identity's Identity. The Rust mapping builds
+// that struct with an exhaustive literal, so a field added there fails this
+// crate's build instead of being quietly dropped on the floor.
+// ---------------------------------------------------------------------------
+
+enum Os {
+  OS_UNSPECIFIED = 0;
+  OS_WINDOWS = 1;
+  OS_MACINTOSH = 2;
+  OS_LINUX = 3;
+  OS_ANDROID = 4;
+  OS_IOS = 5;
+}
+
+// Brand has no Firefox member because rustenium-identity has none.
+enum Brand {
+  BRAND_UNSPECIFIED = 0;
+  BRAND_CHROME = 1;
+  BRAND_SAFARI = 2;
+  BRAND_EDGE = 3;
+}
+
+enum NavigatorPlatform {
+  NAVIGATOR_PLATFORM_UNSPECIFIED = 0;
+  NAVIGATOR_PLATFORM_WIN32 = 1;
+  NAVIGATOR_PLATFORM_MAC_INTEL = 2;
+  NAVIGATOR_PLATFORM_LINUX_X86_64 = 3;
+  NAVIGATOR_PLATFORM_LINUX_ARM_V81 = 4;
+  NAVIGATOR_PLATFORM_IPHONE = 5;
+  NAVIGATOR_PLATFORM_OTHER = 6;
+}
+
+enum Geo {
+  GEO_UNSPECIFIED = 0;
+  GEO_US = 1;
+  GEO_UK = 2;
+  GEO_JP = 3;
+  GEO_DE = 4;
+  GEO_FR = 5;
+  GEO_CA = 6;
+  GEO_AU = 7;
+  GEO_IN = 8;
+  GEO_BR = 9;
+  GEO_KR = 10;
+  GEO_IT = 11;
+  GEO_ES = 12;
+  GEO_NL = 13;
+  GEO_PL = 14;
+  GEO_SE = 15;
+  GEO_MX = 16;
+  GEO_SG = 17;
+  GEO_ZA = 18;
+}
+
+message Platform {
+  optional string bitness = 1;
+  optional string architecture = 2;
+  NavigatorPlatform navigator_platform = 3;
+  // Carries the value only when navigator_platform is NAVIGATOR_PLATFORM_OTHER.
+  string navigator_platform_other = 4;
+  string version = 5;
+}
+
+message Screen {
+  uint32 logical_width = 1;
+  uint32 logical_height = 2;
+  uint32 original_width = 3;
+  uint32 original_height = 4;
+  float density_pixel_ratio = 5;
+}
+
+message Gpu {
+  string vendor = 1;
+  string webgl_renderer = 2;
+  string webgl_vendor = 3;
+}
+
+message Identity {
+  // Absent means desktop or laptop.
+  optional string device_model = 1;
+  bool has_battery = 2;
+  bool has_mouse = 3;
+  bool has_touch = 4;
+  Os os = 5;
+  string os_version = 6;
+  Platform platform = 7;
+  Brand brand = 8;
+  // e.g. [124, 0, 6367, 78]
+  repeated uint32 browser_version = 9;
+  Screen screen = 10;
+  uint32 hardware_concurrency = 11;
+  // deviceMemory in GiB
+  uint32 memory = 12;
+  Gpu gpu = 13;
+  Geo geo = 14;
+  // e.g. ["en-US", "en"]
+  repeated string language = 15;
+  optional uint32 history_count = 16;
+  // Secret: a full URL with credentials.
+  optional string proxy = 17;
+  // IANA name. Absent means resolve it through the proxy.
+  optional string timezone = 18;
+}
+
+// ---------------------------------------------------------------------------
+// State. What survives between sessions.
+// ---------------------------------------------------------------------------
+
+message Cookie {
+  string name = 1;
+  string value = 2;
+  string domain = 3;
+  string path = 4;
+  // Unix seconds. Absent for a session cookie.
+  optional double expires = 5;
+  bool secure = 6;
+  bool http_only = 7;
+  string same_site = 8;
+}
+
+message StorageOrigin {
+  string origin = 1;
+  map<string, string> entries = 2;
+}
+
+message ProfileState {
+  repeated Cookie cookies = 1;
+  repeated StorageOrigin local_storage = 2;
+  repeated StorageOrigin session_storage = 3;
+}
+
+// ---------------------------------------------------------------------------
+
+message OpenSessionRequest {
+  BrowserKind browser = 1;
+
+  // Absent launches the browser as itself — a plain session that still carries
+  // its profile. Present wears an identity, which rustenium-identity applies
+  // over CDP, so it is Chromium-only and ignored for Firefox.
+  Identity identity = 2;
+
+  ProfileState state = 3;
+
+  // Points at an installed browser. Absent downloads one.
+  optional string executable_path = 4;
+}
+
+message OpenSessionResponse {
+  string session_id = 1;
+  Protocol protocol = 2;
+  // Drive the browser from here. The session stays open until CloseSession.
+  string endpoint_url = 3;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {
+  // Captured on the way out. The caller persists it.
+  ProfileState state = 1;
+}
