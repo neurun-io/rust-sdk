@@ -1,6 +1,6 @@
 # Neurun Rust SDK
 
-Opens a browser wearing a stored profile, and stores what it remembers.
+Opens a browser session and drives it.
 
 That is the whole surface. Projects, apps, deployments and keys are made before
 a program runs; this is what a program needs while it is running.
@@ -12,117 +12,84 @@ a program runs; this is what a program needs while it is running.
 neurun = "0.1"
 ```
 
-Building it compiles `proto/browser.proto`, so `protoc` must be on `PATH`.
+Building it compiles `proto/control.proto`, so `protoc` must be on `PATH`.
 
-## The loop
+## Neurun is the broker
 
-A browser profile has two halves. Its **state** — cookies, localStorage,
-sessionStorage — is what makes it worth having: a run that signed in yesterday
-is still signed in today. Its **identity** is presentation, and is optional; a
-profile without one launches the browser as itself and still carries its state.
-
-The control plane never opens a browser. `neurun-browser` is a separate gRPC
-server on loopback beside your program, so the loop is yours to run:
-
-```rust
-use neurun::BrowserProfiles;
-
-let profiles = BrowserProfiles::from_env()?;
-
-let orders = profiles
-    .run("bp_01J...", |session| async move {
-        // CDP for Chrome, BiDi for Firefox.
-        scrape(session.endpoint_url()).await
-    })
-    .await?;
+```
+your program ──gRPC──▶ control plane ──gRPC──▶ neurun-browser
+                             ▲
+            dashboard ──WS───┘
 ```
 
-`run` reads the profile and its state, opens a session carrying both, and
-afterwards closes it and stores what the browser captured. A closure that
-returns `Err` closes without storing — a run that failed part-way is not a
-state worth keeping.
+The SDK talks to Neurun and to nothing else. It does not know that a browser
+service exists, where it listens, or that one was spawned for this host — and it
+cannot be told. It asks for a session, gets an id, and drives that id.
 
-Take the steps yourself when a run should decide what to keep:
+That is the whole reason the dashboard can list a session and stream its
+display: nothing is happening on a port only your code knows about.
 
 ```rust
-let session = profiles.open("bp_01J...").await?;
-println!("{} speaks {:?}", session.endpoint_url(), session.protocol());
+use neurun::Browser;
 
-let close = session.close().await?;
-if !close.saved() {
-    eprintln!("kept nothing: {:?}", close.unsaved);
-}
+let mut session = Browser::from_env()?.open_with("chrome", "bp_01J...").await?;
+let reply = session.execute(command).await?;
+session.close().await?;
 ```
 
-`close` returns the capture either way, so a state the SDK will not store on
-its own is still yours to store with `save_state`. Dropping a session without
-`close` or `discard` abandons it, and the profile keeps the state it had.
+`open` takes a browser and no profile; `open_with` wears one. An empty profile
+id is a plain browser, which is the ordinary case.
 
-## Two ways a profile gets erased
+## Commands are opaque
 
-`PUT .../state` **replaces** rather than merges. It has to: the browser hands
-back its whole cookie jar, so a cookie missing from the body was deleted, and
-merging would resurrect a login the site had already ended. The cost is that
-writing an empty state erases the profile.
+`execute` takes and returns bytes. The payload is a serialized browser-service
+command, and encoding one is an agreement between you and that service: the
+control plane brokers sessions, not browser semantics, so it never parses a
+command, and a command it has never heard of is not one it can corrupt.
 
-Firefox is how that happens by accident. It launches, but it carries no
-profile — `rustenium-identity` drives Chrome over CDP only, and rustenium
-exposes no BiDi storage API — so closing a Firefox session hands back an empty
-state, which the server cannot tell apart from a browser that genuinely holds
-no cookies. **This SDK never writes back after Firefox**: `close` reports
-`Unsaved::Firefox` and returns the capture instead. `Unsaved::EmptyCapture` is
-the same refusal for a browser that handed back nothing over a profile that
-held something.
+## No heartbeat
 
-`clear_state` is how a profile gets erased on purpose.
+**Driving a session renews its lease**, because a browser being commanded is a
+browser that is alive. A session left idle past the lease leaves the list, and
+one being used never does.
+
+Close on the way out anyway, including on failure. A session left to expire is
+correct but slow: the dashboard shows a browser that is not there until the
+lease runs out.
 
 ## Configuration
 
 | Variable | Meaning |
 | --- | --- |
-| `NEURUN_URL` | Where the Neurun API lives. |
-| `NEURUN_API_KEY` | The key to act as. |
-| `NEURUN_BROWSER_ADDR` | Where the browser server listens. Default `127.0.0.1:1268`. |
+| `NEURUN_GRPC_ADDRESS` | `127.0.0.1:<port>`, the control plane inside the worker. |
+| `NEURUN_EXECUTION_TOKEN` | Proves the caller is this execution. |
 
-Both reading and writing profile state take the `browser_profiles:write`
-scope, not `:read` — reading state is exporting live sessions.
+That is the entire environment. There is no app id, because **an app id in an
+environment variable is a claim, not a credential** — the process holding it is
+your own code and could change it. The token is the one thing it holds that
+Neurun minted; the organization, the app and the execution all live on the
+other side of the lookup.
 
-A browser server address that is not loopback is refused. That server carries
-no authentication because only the machine running the program can reach it;
-dialling it across a network would send a profile's cookies, and a proxy URL
-with credentials in it, to an unauthenticated port. The authenticated boundary
-is the Neurun API, not that one.
-
-## The proxy an identity was created with
-
-The API never returns a proxy URL — an identity comes back reporting
-`proxy_set` and nothing else — so a session opens without one unless the
-program supplies it:
-
-```rust
-let mut identity = profiles.profile("bp_01J...").await?.identity.unwrap();
-identity.proxy = Some(std::env::var("SCRAPER_PROXY")?);
-
-let session = profiles
-    .open_with("bp_01J...", neurun::OpenOptions { identity: Some(identity), ..Default::default() })
-    .await?;
-```
+The token travels in `neurun-execution-token` metadata on every call. An
+address that is not loopback is refused: the listener runs beside the handler,
+and a token must not leave the host.
 
 ## Drift
 
-`proto/browser.proto` is a copy of the contract `neurun-browser` serves, and
-the client is generated from it at build time. The mapping in `src/wire.rs`
-builds the identity with an exhaustive struct literal, so a field added
-upstream fails this crate's build rather than being quietly dropped.
+`proto/control.proto` is a copy of the contract the control plane serves, and
+the client is generated from it at build time, so a field added upstream is a
+build failure here rather than a value quietly dropped.
+
+The contract carries two services. This crate speaks `Browser`; `BrowserService`
+is between the control plane and `neurun-browser`, and is generated but unused
+here except by the tests, which stand a fake control plane up and drive the real
+loop against it.
 
 ## Tests
 
 ```sh
 cargo test
 ```
-
-The suite includes the whole loop driven against a fake API and a fake browser
-server, which is where the rules above are actually pinned down.
 
 ## What is not here
 

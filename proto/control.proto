@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package neurun.browser.v1;
+
+option go_package = "github.com/neurun-io/neurun/internal/browserpb;browserpb";
+
+// Browser is what the SDK talks to. It is served by the control plane on
+// loopback inside the worker, never on a routable interface.
+//
+// The SDK does not know where a browser actually runs and cannot be told. It
+// asks for one; the control plane spawns a browser service in the worker
+// environment, keeps the handle, and relays. That is what makes a session
+// something the dashboard can list and watch — nothing is happening on a port
+// only the tenant's code knows about.
+service Browser {
+  // OpenSession spawns a browser and returns the session it created.
+  rpc OpenSession(OpenSessionRequest) returns (Session);
+
+  // Execute relays one command to the session's browser and returns its reply.
+  //
+  // The payload is opaque on purpose. The control plane brokers sessions, not
+  // browser semantics: it never parses a command, so the browser service's
+  // command set can grow without a release here, and a command it has never
+  // heard of is not a command it can corrupt.
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+
+  // CloseSession stops the browser and drops the session.
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+message OpenSessionRequest {
+  // chrome or firefox.
+  string browser = 1;
+  // The profile to wear. Empty is a plain browser, which is the ordinary case.
+  string browser_profile_id = 2;
+}
+
+message Session {
+  string id = 1;
+  string app_id = 2;
+  string execution_id = 3;
+  string browser_profile_id = 4;
+  string browser = 5;
+  // Where the browser runs is never sent. The SDK asks for a session and drives
+  // it through this service; a viewer names one and asks the control plane to
+  // stream. Neither is told an address, and neither needs one.
+  string status = 6;
+  int64 started_at = 7;
+}
+
+message ExecuteRequest {
+  string session_id = 1;
+  // A serialized browser-service command. Neither the SDK's encoding nor the
+  // browser service's is this service's business.
+  bytes command = 2;
+}
+
+message ExecuteResponse {
+  bytes result = 1;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}
+
+// BrowserService is what neurun-browser serves. The control plane is its only
+// client — nothing else knows where it listens, and it is never on a routable
+// interface.
+service BrowserService {
+  // Open spawns a browser and returns the session the service minted for it.
+  rpc Open(OpenRequest) returns (OpenResponse);
+
+  // Run performs one command against a session.
+  rpc Run(RunRequest) returns (RunResponse);
+
+  // Close stops the browser.
+  rpc Close(CloseRequest) returns (CloseResponse);
+
+  // StreamDisplay is a pipe to the session's framebuffer. Each chunk is opaque
+  // RFB: client-to-server frames in, server-to-client frames out.
+  //
+  // The session is named in the neurun-session-id metadata rather than in every
+  // chunk, because it is a property of the stream and not of a frame.
+  rpc StreamDisplay(stream DisplayChunk) returns (stream DisplayChunk);
+}
+
+message OpenRequest {
+  string browser = 1;
+  string browser_profile_id = 2;
+  string app_id = 3;
+  string execution_id = 4;
+}
+
+message OpenResponse {
+  string session_id = 1;
+}
+
+message RunRequest {
+  string session_id = 1;
+  bytes command = 2;
+}
+
+message RunResponse {
+  bytes result = 1;
+}
+
+message CloseRequest {
+  string session_id = 1;
+}
+
+message CloseResponse {}
+
+message DisplayChunk {
+  bytes data = 1;
+}
