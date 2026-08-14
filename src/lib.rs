@@ -12,9 +12,9 @@
 //!
 //! # async fn example() -> Result<(), Error> {
 //! let mut session = Browser::from_env()?.open("chrome").await?;
-//! let reply = session.execute(b"a command".to_vec()).await?;
+//! session.navigate("https://example.com").await?;
+//! session.wait_for_navigation().await?;
 //! session.close().await?;
-//! # let _ = reply;
 //! # Ok(())
 //! # }
 //! ```
@@ -28,12 +28,12 @@
 //! travels in `neurun-execution-token` metadata on every call, and an address
 //! that is not loopback is refused — the token must not leave the host.
 //!
-//! # Commands are opaque
+//! # Commands
 //!
-//! [`Session::execute`] takes and returns bytes. The payload is a serialized
-//! browser-service command, and encoding one is an agreement between the caller
-//! and that service: the control plane brokers sessions, not browser semantics,
-//! and never parses a command.
+//! Each command is its own call, shaped after the browser's own function —
+//! [`Session::navigate`] takes a URL, [`Session::wait_for_navigation`] a
+//! [`WaitUntil`] and a timeout. The set is small because the browser
+//! implements a small set, and it grows one command at a time.
 //!
 //! # No heartbeat
 //!
@@ -46,7 +46,7 @@
 pub mod error;
 mod session;
 
-/// The control plane's gRPC contract, generated from `proto/control.proto`.
+/// The control plane's gRPC contract, generated from `proto/browser.proto`.
 ///
 /// Generated rather than hand-written so that a field added upstream is a build
 /// failure here rather than a value silently dropped.
@@ -55,4 +55,5 @@ pub mod proto {
 }
 
 pub use error::{Error, Result};
+pub use proto::WaitUntil;
 pub use session::{Browser, Session, SessionInfo, Token};

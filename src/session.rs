@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! OpenSession{browser, browser_profile_id?}  →  a session id
-//! Execute{session_id, command}                  as many times as needed
+//! Navigate / WaitForNavigation{session_id, …}   as many times as needed
 //! CloseSession{session_id}                      including on failure
 //! ```
 //!
@@ -25,7 +25,9 @@ use tonic::{Request, Status};
 
 use crate::error::{Error, Result};
 use crate::proto::browser_client::BrowserClient;
-use crate::proto::{CloseSessionRequest, ExecuteRequest, OpenSessionRequest};
+use crate::proto::{
+    CloseSessionRequest, NavigateRequest, OpenSessionRequest, WaitForNavigationRequest, WaitUntil,
+};
 
 /// The credential travels here on every call.
 const TOKEN_HEADER: &str = "neurun-execution-token";
@@ -156,7 +158,8 @@ pub struct SessionInfo {
     pub started_at: i64,
 }
 
-/// One open browser. Drive it with [`execute`](Session::execute), and close it.
+/// One open browser. Drive it with [`navigate`](Session::navigate) and
+/// [`wait_for_navigation`](Session::wait_for_navigation), and close it.
 ///
 /// Dropping one without [`close`](Session::close) leaves it to expire, which is
 /// correct but slow: the dashboard shows a browser that is not there until the
@@ -182,29 +185,68 @@ impl Session {
         self.is_open
     }
 
-    /// Relays one command to this session's browser and returns its reply.
+    /// Drives this session's browser to `url`, sending no Referer.
     ///
-    /// The payload is opaque here as it is at the control plane: it is a
-    /// serialized browser-service command, and what encodes it is an agreement
-    /// between the caller and that service.
+    /// Also renews the session's lease, which is why there is no heartbeat to
+    /// forget.
+    pub async fn navigate(&mut self, url: impl Into<String>) -> Result<()> {
+        self.navigate_with(url, None).await
+    }
+
+    /// Drives this session's browser to `url`.
     ///
-    /// Executing also renews the session's lease, which is why there is no
-    /// heartbeat to forget.
-    pub async fn execute(&mut self, command: impl Into<Vec<u8>>) -> Result<Vec<u8>> {
+    /// `referer` absent sends no Referer at all, which is not the same as
+    /// sending an empty one.
+    pub async fn navigate_with(
+        &mut self,
+        url: impl Into<String>,
+        referer: Option<String>,
+    ) -> Result<()> {
         if !self.is_open {
             return Err(Error::Closed {
                 session_id: self.info.id.clone(),
             });
         }
-        let response = self
-            .client
-            .execute(ExecuteRequest {
+        self.client
+            .navigate(NavigateRequest {
                 session_id: self.info.id.clone(),
-                command: command.into(),
+                url: url.into(),
+                referer,
             })
-            .await?
-            .into_inner();
-        Ok(response.result)
+            .await?;
+        Ok(())
+    }
+
+    /// Blocks until this session's page has navigated as far as [`WaitUntil::Load`].
+    ///
+    /// Also renews the session's lease, which is why there is no heartbeat to
+    /// forget.
+    pub async fn wait_for_navigation(&mut self) -> Result<()> {
+        self.wait_for_navigation_with(WaitUntil::Unspecified, 0)
+            .await
+    }
+
+    /// Blocks until this session's page has navigated as far as `wait_until`.
+    ///
+    /// `timeout_ms` left at zero leaves the browser's own default in place.
+    pub async fn wait_for_navigation_with(
+        &mut self,
+        wait_until: WaitUntil,
+        timeout_ms: u32,
+    ) -> Result<()> {
+        if !self.is_open {
+            return Err(Error::Closed {
+                session_id: self.info.id.clone(),
+            });
+        }
+        self.client
+            .wait_for_navigation(WaitForNavigationRequest {
+                session_id: self.info.id.clone(),
+                wait_until: wait_until as i32,
+                timeout_ms,
+            })
+            .await?;
+        Ok(())
     }
 
     /// Stops the browser and drops the session.

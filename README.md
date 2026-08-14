@@ -12,7 +12,7 @@ a program runs; this is what a program needs while it is running.
 neurun = "0.1"
 ```
 
-Building it compiles `proto/control.proto`, so `protoc` must be on `PATH`.
+Building it compiles `proto/browser.proto`, so `protoc` must be on `PATH`.
 
 ## Neurun is the broker
 
@@ -33,19 +33,22 @@ display: nothing is happening on a port only your code knows about.
 use neurun::Browser;
 
 let mut session = Browser::from_env()?.open_with("chrome", "bp_01J...").await?;
-let reply = session.execute(command).await?;
+session.navigate("https://example.com").await?;
+session.wait_for_navigation().await?;
 session.close().await?;
 ```
 
 `open` takes a browser and no profile; `open_with` wears one. An empty profile
 id is a plain browser, which is the ordinary case.
 
-## Commands are opaque
+## Commands
 
-`execute` takes and returns bytes. The payload is a serialized browser-service
-command, and encoding one is an agreement between you and that service: the
-control plane brokers sessions, not browser semantics, so it never parses a
-command, and a command it has never heard of is not one it can corrupt.
+Each command is its own call, shaped after the browser's own function —
+`navigate` takes a URL and, with `navigate_with`, an optional referer;
+`wait_for_navigation` takes a `WaitUntil` and a timeout through
+`wait_for_navigation_with`. The set is small because the browser implements a
+small set, and it grows one command at a time: a call this crate does not have
+is a call the browser does not support yet, not one silently ignored.
 
 ## No heartbeat
 
@@ -76,14 +79,15 @@ and a token must not leave the host.
 
 ## Drift
 
-`proto/control.proto` is a copy of the contract the control plane serves, and
+`proto/browser.proto` is a copy of the contract the control plane serves, and
 the client is generated from it at build time, so a field added upstream is a
 build failure here rather than a value quietly dropped.
 
-The contract carries two services. This crate speaks `Browser`; `BrowserService`
-is between the control plane and `neurun-browser`, and is generated but unused
-here except by the tests, which stand a fake control plane up and drive the real
-loop against it.
+This is the SDK's whole contract: what `neurun-browser` speaks to the control
+plane is a separate file, `browserservice.proto`, that this crate never sees.
+The server side of `browser.proto` is generated too, though this crate is a
+client — it is what lets the tests stand a fake control plane up and drive the
+real loop against it.
 
 ## Tests
 

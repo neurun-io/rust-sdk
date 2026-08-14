@@ -1,7 +1,7 @@
 //! Drives the session loop against a fake control plane.
 //!
 //! What is worth asserting here is not that the types line up — the compiler
-//! does that — but that the three calls happen and that every one of them
+//! does that — but that the four calls happen and that every one of them
 //! carries the execution token.
 
 use std::sync::{Arc, Mutex};
@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use neurun::Browser;
 use neurun::proto::browser_server::{Browser as BrowserService, BrowserServer};
 use neurun::proto::{
-    CloseSessionRequest, CloseSessionResponse, ExecuteRequest, ExecuteResponse, OpenSessionRequest,
-    Session as ProtoSession,
+    CloseSessionRequest, CloseSessionResponse, NavigateRequest, NavigateResponse,
+    OpenSessionRequest, Session as ProtoSession, WaitForNavigationRequest,
+    WaitForNavigationResponse,
 };
 use tokio::net::TcpListener;
 use tonic::{Request, Response, Status};
@@ -18,7 +19,8 @@ use tonic::{Request, Response, Status};
 #[derive(Default)]
 struct Recorded {
     opened: Vec<OpenSessionRequest>,
-    executed: Vec<ExecuteRequest>,
+    navigated: Vec<NavigateRequest>,
+    waited: Vec<WaitForNavigationRequest>,
     closed: Vec<String>,
     tokens: Vec<String>,
 }
@@ -65,19 +67,30 @@ impl BrowserService for FakeControlPlane {
         Ok(Response::new(session))
     }
 
-    async fn execute(
+    async fn navigate(
         &self,
-        request: Request<ExecuteRequest>,
-    ) -> Result<Response<ExecuteResponse>, Status> {
+        request: Request<NavigateRequest>,
+    ) -> Result<Response<NavigateResponse>, Status> {
         self.token(&request)?;
         self.recorded
             .lock()
             .unwrap()
-            .executed
+            .navigated
             .push(request.into_inner());
-        Ok(Response::new(ExecuteResponse {
-            result: b"pong".to_vec(),
-        }))
+        Ok(Response::new(NavigateResponse {}))
+    }
+
+    async fn wait_for_navigation(
+        &self,
+        request: Request<WaitForNavigationRequest>,
+    ) -> Result<Response<WaitForNavigationResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .waited
+            .push(request.into_inner());
+        Ok(Response::new(WaitForNavigationResponse {}))
     }
 
     async fn close_session(
@@ -111,7 +124,7 @@ async fn control_plane() -> (String, Arc<Mutex<Recorded>>) {
 }
 
 #[tokio::test]
-async fn a_session_opens_executes_and_closes() {
+async fn a_session_opens_navigates_and_closes() {
     let (address, recorded) = control_plane().await;
     let browser = Browser::new(address, "net_exe_secret").unwrap();
 
@@ -121,21 +134,35 @@ async fn a_session_opens_executes_and_closes() {
     assert_eq!(session.info().browser_profile_id, "bp_1");
     assert_eq!(session.info().started_at, 1_800_000_000);
 
-    assert_eq!(
-        session.execute(b"a command".to_vec()).await.unwrap(),
-        b"pong"
-    );
+    session
+        .navigate_with("https://example.com", Some("https://ref.example".into()))
+        .await
+        .unwrap();
+    session
+        .wait_for_navigation_with(neurun::WaitUntil::NetworkIdle, 5_000)
+        .await
+        .unwrap();
     session.close().await.unwrap();
 
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.opened[0].browser, "chrome");
     assert_eq!(recorded.opened[0].browser_profile_id, "bp_1");
-    assert_eq!(recorded.executed[0].command, b"a command");
-    assert_eq!(recorded.executed[0].session_id, "bsn_1");
+    assert_eq!(recorded.navigated[0].session_id, "bsn_1");
+    assert_eq!(recorded.navigated[0].url, "https://example.com");
+    assert_eq!(
+        recorded.navigated[0].referer.as_deref(),
+        Some("https://ref.example")
+    );
+    assert_eq!(recorded.waited[0].session_id, "bsn_1");
+    assert_eq!(
+        recorded.waited[0].wait_until,
+        neurun::WaitUntil::NetworkIdle as i32
+    );
+    assert_eq!(recorded.waited[0].timeout_ms, 5_000);
     assert_eq!(recorded.closed, vec!["bsn_1".to_string()]);
     assert_eq!(
         recorded.tokens,
-        vec!["net_exe_secret".to_string(); 3],
+        vec!["net_exe_secret".to_string(); 4],
         "every call carries the token"
     );
 }
@@ -145,7 +172,7 @@ async fn a_session_without_a_profile_wears_none() {
     let (address, recorded) = control_plane().await;
     let browser = Browser::new(address, "net_exe_secret").unwrap();
 
-    let mut session = browser.open("firefox").await.unwrap();
+    let mut session = browser.open("safari").await.unwrap();
     session.close().await.unwrap();
 
     assert!(
@@ -166,7 +193,7 @@ async fn a_closed_session_is_neither_driven_nor_closed_again() {
 
     assert!(!session.is_open());
     assert!(matches!(
-        session.execute(b"a command".to_vec()).await,
+        session.navigate("https://example.com").await,
         Err(neurun::Error::Closed { .. })
     ));
     assert!(matches!(

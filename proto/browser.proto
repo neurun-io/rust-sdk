@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package neurun.browser.v1;
+
+option go_package = "github.com/neurun-io/neurun/internal/browserpb;browserpb";
+
+// Browser is what the SDK talks to. It is served by the control plane on
+// loopback inside the worker, never on a routable interface.
+//
+// The SDK does not know where a browser actually runs and cannot be told. It
+// asks for one; the control plane spawns a browser service in the worker
+// environment, keeps the handle, and relays. That is what makes a session
+// something the dashboard can list and watch — nothing is happening on a port
+// only the tenant's code knows about.
+//
+// What neurun-browser serves on the other side is browserservice.proto. The two
+// are deliberately separate: this one is a public contract with tenant code, and
+// that one is an internal detail nothing outside the host may depend on.
+service Browser {
+  // OpenSession spawns a browser and returns the session it created.
+  rpc OpenSession(OpenSessionRequest) returns (Session);
+
+  // Navigate drives the session to a URL.
+  rpc Navigate(NavigateRequest) returns (NavigateResponse);
+
+  // WaitForNavigation blocks until the page the session is on has navigated.
+  rpc WaitForNavigation(WaitForNavigationRequest) returns (WaitForNavigationResponse);
+
+  // CloseSession stops the browser and drops the session.
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+message OpenSessionRequest {
+  // chrome or safari. Read only when no profile is named: a profile's identity
+  // already says which browser it is, and two answers that could disagree is
+  // one answer too many.
+  string browser = 1;
+  // The profile to wear. Empty still gets a persona — one is drawn for the
+  // session — it just is not kept, along with the cookies it collected.
+  string browser_profile_id = 2;
+}
+
+message Session {
+  string id = 1;
+  string app_id = 2;
+  string execution_id = 3;
+  string browser_profile_id = 4;
+  string browser = 5;
+  // Where the browser runs is never sent. The SDK asks for a session and drives
+  // it through this service; a viewer names one and asks the control plane to
+  // stream. Neither is told an address, and neither needs one.
+  string status = 6;
+  int64 started_at = 7;
+}
+
+// Every command names its session and is its own message, shaped after the
+// browser's own function rather than after anything convenient here. The set is
+// small because the browser implements a small set; it grows one command at a
+// time, on purpose. A caller can see what it is allowed to do from the service
+// definition alone, and a command nobody serves fails to compile rather than at
+// runtime.
+message NavigateRequest {
+  string session_id = 1;
+  string url = 2;
+  // Absent sends no Referer, which is not the same as sending an empty one.
+  optional string referer = 3;
+}
+
+message NavigateResponse {}
+
+message WaitForNavigationRequest {
+  string session_id = 1;
+  // Unspecified is Load, which is the browser's own default.
+  WaitUntil wait_until = 2;
+  // The browser takes a Duration; this is it in milliseconds, which is as fine
+  // as a navigation timeout is ever set. Zero leaves its default in place.
+  uint32 timeout_ms = 3;
+}
+
+message WaitForNavigationResponse {}
+
+// WaitUntil is how far into a navigation to wait, mirroring the browser's enum.
+enum WaitUntil {
+  WAIT_UNTIL_UNSPECIFIED = 0;
+  WAIT_UNTIL_COMMIT = 1;
+  WAIT_UNTIL_DOM_CONTENT_LOADED = 2;
+  WAIT_UNTIL_LOAD = 3;
+  WAIT_UNTIL_NETWORK_ALMOST_IDLE = 4;
+  WAIT_UNTIL_NETWORK_IDLE = 5;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}
