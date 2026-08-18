@@ -1,9 +1,9 @@
 //! Browser sessions, as a handler sees them.
 //!
 //! ```text
-//! OpenSession{browser, browser_profile_id?}  →  a session id
+//! OpenSession{browser, browser_profile_id?, load_storage?}  →  a session id
 //! Navigate / WaitForNavigation{session_id, …}   as many times as needed
-//! CloseSession{session_id}                      including on failure
+//! CloseSession{session_id, save_storage?}       including on failure
 //! ```
 //!
 //! Neurun is the broker. This talks to the control plane on loopback and to
@@ -90,22 +90,35 @@ impl Browser {
 
     /// Opens a browser and returns the session the control plane created.
     pub async fn open(&self, browser: impl Into<String>) -> Result<Session> {
-        self.open_with(browser, "").await
+        self.open_with(browser, "", false).await
     }
 
     /// Opens a browser wearing a profile.
     ///
     /// An empty `profile_id` is a plain browser, which is the ordinary case.
+    ///
+    /// `load_storage` starts the browser from what that profile remembers —
+    /// its cookies, for now — and needs a profile to read them from.
     pub async fn open_with(
         &self,
         browser: impl Into<String>,
         profile_id: impl Into<String>,
+        load_storage: bool,
     ) -> Result<Session> {
+        let browser_profile_id = profile_id.into();
+        if load_storage && browser_profile_id.is_empty() {
+            return Err(Error::configuration(
+                "loading storage needs a profile: a profile is where a \
+                 session's cookies are kept, and a browser without one keeps \
+                 none.",
+            ));
+        }
         let mut client = self.connect().await?;
         let session = client
             .open_session(OpenSessionRequest {
                 browser: browser.into(),
-                browser_profile_id: profile_id.into(),
+                browser_profile_id,
+                load_storage,
             })
             .await?
             .into_inner();
@@ -251,15 +264,33 @@ impl Session {
 
     /// Stops the browser and drops the session.
     pub async fn close(&mut self) -> Result<()> {
+        self.close_with(false).await
+    }
+
+    /// Stops the browser and drops the session, keeping what it collected.
+    ///
+    /// `save_storage` captures what the browser holds — its cookies, for
+    /// now — into the profile this session wears. The capture replaces the
+    /// profile's rather than merging into it, so a cookie the browser no
+    /// longer has is a cookie the profile no longer has.
+    pub async fn close_with(&mut self, save_storage: bool) -> Result<()> {
         if !self.is_open {
             return Err(Error::Closed {
                 session_id: self.info.id.clone(),
             });
         }
+        if save_storage && self.info.browser_profile_id.is_empty() {
+            return Err(Error::configuration(format!(
+                "session {} wears no profile, so there is nowhere to save what \
+                 it collected",
+                self.info.id
+            )));
+        }
         self.is_open = false;
         self.client
             .close_session(CloseSessionRequest {
                 session_id: self.info.id.clone(),
+                save_storage,
             })
             .await?;
         Ok(())

@@ -38,6 +38,9 @@ message OpenSessionRequest {
   // The profile to wear. Empty still gets a persona — one is drawn for the
   // session — it just is not kept, along with the cookies it collected.
   string browser_profile_id = 2;
+  // Start from what the profile remembers. Cookies only, for now. Needs a
+  // profile named above; there is nothing to load without one.
+  bool load_storage = 3;
 }
 
 message Session {
@@ -91,6 +94,9 @@ enum WaitUntil {
 
 message CloseSessionRequest {
   string session_id = 1;
+  // Capture into the profile the session wears. Cookies only, for now, and the
+  // capture replaces what the profile held rather than merging into it.
+  bool save_storage = 2;
 }
 
 message CloseSessionResponse {}

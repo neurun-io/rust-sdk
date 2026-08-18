@@ -35,6 +35,17 @@
 //! [`WaitUntil`] and a timeout. The set is small because the browser
 //! implements a small set, and it grows one command at a time.
 //!
+//! # What a profile remembers
+//!
+//! A profile is where a session's state lives between runs, and both
+//! directions are opt-in: [`Browser::open_with`] takes a `load_storage` that
+//! starts the browser from what the profile holds, and [`Session::close_with`]
+//! a `save_storage` that writes what the browser holds back to it. Cookies,
+//! for now.
+//!
+//! The capture replaces the profile's state rather than merging into it, which
+//! is the only semantic that can end a login. Both flags need a profile.
+//!
 //! # No heartbeat
 //!
 //! Driving a session renews its lease, because a browser being commanded is a

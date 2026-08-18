@@ -32,14 +32,32 @@ display: nothing is happening on a port only your code knows about.
 ```rust
 use neurun::Browser;
 
-let mut session = Browser::from_env()?.open_with("chrome", "bp_01J...").await?;
+let mut session = Browser::from_env()?
+    .open_with("chrome", "bp_01J...", true)
+    .await?;
 session.navigate("https://example.com").await?;
 session.wait_for_navigation().await?;
-session.close().await?;
+session.close_with(true).await?;
 ```
 
 `open` takes a browser and no profile; `open_with` wears one. An empty profile
 id is a plain browser, which is the ordinary case.
+
+## What a profile remembers
+
+A profile is where a session's state lives between runs, and both directions
+are opt-in: `open_with`'s `load_storage` starts the browser from what the
+profile holds, and `close_with`'s `save_storage` writes what the browser holds
+back to it. Cookies, for now — the profile also keeps DOM storage, and these
+two flags will carry it when the browser does.
+
+The capture **replaces** the profile's state rather than merging into it, which
+is the only semantic that can end a login: a cookie the site invalidated has to
+be able to disappear, and merging would resurrect it. So save a run you would
+be happy to keep, not one that failed halfway through a sign-in.
+
+Both flags need a profile. Asking for either without one is an
+`Error::Configuration`, refused before the call goes out.
 
 ## Commands
 

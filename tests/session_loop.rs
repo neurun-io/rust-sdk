@@ -21,7 +21,7 @@ struct Recorded {
     opened: Vec<OpenSessionRequest>,
     navigated: Vec<NavigateRequest>,
     waited: Vec<WaitForNavigationRequest>,
-    closed: Vec<String>,
+    closed: Vec<CloseSessionRequest>,
     tokens: Vec<String>,
 }
 
@@ -102,7 +102,7 @@ impl BrowserService for FakeControlPlane {
             .lock()
             .unwrap()
             .closed
-            .push(request.into_inner().session_id);
+            .push(request.into_inner());
         Ok(Response::new(CloseSessionResponse {}))
     }
 }
@@ -128,7 +128,7 @@ async fn a_session_opens_navigates_and_closes() {
     let (address, recorded) = control_plane().await;
     let browser = Browser::new(address, "net_exe_secret").unwrap();
 
-    let mut session = browser.open_with("chrome", "bp_1").await.unwrap();
+    let mut session = browser.open_with("chrome", "bp_1", true).await.unwrap();
     assert_eq!(session.id(), "bsn_1");
     assert_eq!(session.info().status, "live");
     assert_eq!(session.info().browser_profile_id, "bp_1");
@@ -142,11 +142,12 @@ async fn a_session_opens_navigates_and_closes() {
         .wait_for_navigation_with(neurun::WaitUntil::NetworkIdle, 5_000)
         .await
         .unwrap();
-    session.close().await.unwrap();
+    session.close_with(true).await.unwrap();
 
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.opened[0].browser, "chrome");
     assert_eq!(recorded.opened[0].browser_profile_id, "bp_1");
+    assert!(recorded.opened[0].load_storage);
     assert_eq!(recorded.navigated[0].session_id, "bsn_1");
     assert_eq!(recorded.navigated[0].url, "https://example.com");
     assert_eq!(
@@ -159,7 +160,8 @@ async fn a_session_opens_navigates_and_closes() {
         neurun::WaitUntil::NetworkIdle as i32
     );
     assert_eq!(recorded.waited[0].timeout_ms, 5_000);
-    assert_eq!(recorded.closed, vec!["bsn_1".to_string()]);
+    assert_eq!(recorded.closed[0].session_id, "bsn_1");
+    assert!(recorded.closed[0].save_storage);
     assert_eq!(
         recorded.tokens,
         vec!["net_exe_secret".to_string(); 4],
@@ -181,6 +183,32 @@ async fn a_session_without_a_profile_wears_none() {
             .is_empty(),
         "a plain browser is the ordinary case"
     );
+}
+
+#[tokio::test]
+async fn storage_without_a_profile_is_refused_at_both_ends() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    assert!(matches!(
+        browser.open_with("chrome", "", true).await,
+        Err(neurun::Error::Configuration(_))
+    ));
+    assert!(
+        recorded.lock().unwrap().opened.is_empty(),
+        "a session with nowhere to load from is not opened at all"
+    );
+
+    let mut session = browser.open("chrome").await.unwrap();
+    assert!(matches!(
+        session.close_with(true).await,
+        Err(neurun::Error::Configuration(_))
+    ));
+    assert!(
+        session.is_open(),
+        "a refused save leaves the session open to close properly"
+    );
+    session.close().await.unwrap();
 }
 
 #[tokio::test]
