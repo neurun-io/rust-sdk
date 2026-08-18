@@ -2,12 +2,11 @@
 name = "neurun"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
-description = "Neurun Rust SDK: open a browser session and drive it."
+description = "Neurun Rust SDK"
 readme = "README.md"
 license = "Apache-2.0"
-keywords = ["neurun", "browser", "session", "automation"]
-categories = ["api-bindings", "web-programming"]
+categories = ["emulators", "security", "config", "development-tools::testing", "api-bindings"]
+keywords = ["stealth", "infrastructure", "webdriver", "automation"]
 
 [dependencies]
 prost = "0.14.4"

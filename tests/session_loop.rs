@@ -9,9 +9,13 @@ use std::sync::{Arc, Mutex};
 use neurun::Browser;
 use neurun::proto::browser_server::{Browser as BrowserService, BrowserServer};
 use neurun::proto::{
-    CloseSessionRequest, CloseSessionResponse, NavigateRequest, NavigateResponse,
-    OpenSessionRequest, Session as ProtoSession, WaitForNavigationRequest,
-    WaitForNavigationResponse,
+    Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, GetCookiesRequest,
+    GetCookiesResponse, GetNodeRequest, GetNodeResponse, HumanMouseClickRequest,
+    HumanMouseClickResponse, HumanMouseMoveRequest, HumanMouseMoveResponse, HumanScrollYRequest,
+    HumanScrollYResponse, HumanScrollYToRequest, HumanScrollYToResponse, HumanTypeRequest,
+    HumanTypeResponse, NavigateRequest, NavigateResponse, Node, OpenSessionRequest,
+    ReportResultRequest, ReportResultResponse, Session as ProtoSession, SetCookiesRequest,
+    SetCookiesResponse, WaitForNavigationRequest, WaitForNavigationResponse,
 };
 use tokio::net::TcpListener;
 use tonic::{Request, Response, Status};
@@ -21,6 +25,13 @@ struct Recorded {
     opened: Vec<OpenSessionRequest>,
     navigated: Vec<NavigateRequest>,
     waited: Vec<WaitForNavigationRequest>,
+    located: Vec<GetNodeRequest>,
+    moved: Vec<HumanMouseMoveRequest>,
+    clicked: Vec<HumanMouseClickRequest>,
+    typed: Vec<HumanTypeRequest>,
+    scrolled: Vec<HumanScrollYRequest>,
+    scrolled_to: Vec<HumanScrollYToRequest>,
+    jarred: Vec<SetCookiesRequest>,
     closed: Vec<CloseSessionRequest>,
     tokens: Vec<String>,
 }
@@ -93,6 +104,140 @@ impl BrowserService for FakeControlPlane {
         Ok(Response::new(WaitForNavigationResponse {}))
     }
 
+    async fn get_node(
+        &self,
+        request: Request<GetNodeRequest>,
+    ) -> Result<Response<GetNodeResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .located
+            .push(request.into_inner());
+        Ok(Response::new(GetNodeResponse {
+            node: Some(Node {
+                node_id: 42,
+                local_name: "input".into(),
+                node_type: 1,
+                attributes: vec![Attribute {
+                    name: "name".into(),
+                    value: "email".into(),
+                }],
+                text: String::new(),
+                html: "<input name=\"email\">".into(),
+                x: 100.0,
+                y: 900.0,
+                width: 200.0,
+                height: 40.0,
+            }),
+        }))
+    }
+
+    async fn human_mouse_move(
+        &self,
+        request: Request<HumanMouseMoveRequest>,
+    ) -> Result<Response<HumanMouseMoveResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .moved
+            .push(request.into_inner());
+        Ok(Response::new(HumanMouseMoveResponse {}))
+    }
+
+    async fn human_mouse_click(
+        &self,
+        request: Request<HumanMouseClickRequest>,
+    ) -> Result<Response<HumanMouseClickResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .clicked
+            .push(request.into_inner());
+        Ok(Response::new(HumanMouseClickResponse {}))
+    }
+
+    async fn human_type(
+        &self,
+        request: Request<HumanTypeRequest>,
+    ) -> Result<Response<HumanTypeResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .typed
+            .push(request.into_inner());
+        Ok(Response::new(HumanTypeResponse {}))
+    }
+
+    async fn human_scroll_y(
+        &self,
+        request: Request<HumanScrollYRequest>,
+    ) -> Result<Response<HumanScrollYResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .scrolled
+            .push(request.into_inner());
+        Ok(Response::new(HumanScrollYResponse {}))
+    }
+
+    async fn human_scroll_y_to(
+        &self,
+        request: Request<HumanScrollYToRequest>,
+    ) -> Result<Response<HumanScrollYToResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .scrolled_to
+            .push(request.into_inner());
+        Ok(Response::new(HumanScrollYToResponse {}))
+    }
+
+    async fn get_cookies(
+        &self,
+        request: Request<GetCookiesRequest>,
+    ) -> Result<Response<GetCookiesResponse>, Status> {
+        self.token(&request)?;
+        Ok(Response::new(GetCookiesResponse {
+            cookies: vec![Cookie {
+                name: "session".into(),
+                value: "abc".into(),
+                domain: "example.com".into(),
+                path: "/".into(),
+                expires: None,
+                secure: true,
+                http_only: true,
+                same_site: "Lax".into(),
+            }],
+        }))
+    }
+
+    async fn set_cookies(
+        &self,
+        request: Request<SetCookiesRequest>,
+    ) -> Result<Response<SetCookiesResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .jarred
+            .push(request.into_inner());
+        Ok(Response::new(SetCookiesResponse {}))
+    }
+
+    async fn report_result(
+        &self,
+        request: Request<ReportResultRequest>,
+    ) -> Result<Response<ReportResultResponse>, Status> {
+        self.token(&request)?;
+        Ok(Response::new(ReportResultResponse {}))
+    }
+
     async fn close_session(
         &self,
         request: Request<CloseSessionRequest>,
@@ -142,7 +287,7 @@ async fn a_session_opens_navigates_and_closes() {
         .wait_for_navigation_with(neurun::WaitUntil::NetworkIdle, 5_000)
         .await
         .unwrap();
-    session.close_with(true).await.unwrap();
+    session.close(true).await.unwrap();
 
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.opened[0].browser, "chrome");
@@ -175,7 +320,7 @@ async fn a_session_without_a_profile_wears_none() {
     let browser = Browser::new(address, "net_exe_secret").unwrap();
 
     let mut session = browser.open("safari").await.unwrap();
-    session.close().await.unwrap();
+    session.close(false).await.unwrap();
 
     assert!(
         recorded.lock().unwrap().opened[0]
@@ -201,14 +346,14 @@ async fn storage_without_a_profile_is_refused_at_both_ends() {
 
     let mut session = browser.open("chrome").await.unwrap();
     assert!(matches!(
-        session.close_with(true).await,
+        session.close(true).await,
         Err(neurun::Error::Configuration(_))
     ));
     assert!(
         session.is_open(),
         "a refused save leaves the session open to close properly"
     );
-    session.close().await.unwrap();
+    session.close(false).await.unwrap();
 }
 
 #[tokio::test]
@@ -217,7 +362,7 @@ async fn a_closed_session_is_neither_driven_nor_closed_again() {
     let browser = Browser::new(address, "net_exe_secret").unwrap();
 
     let mut session = browser.open("chrome").await.unwrap();
-    session.close().await.unwrap();
+    session.close(false).await.unwrap();
 
     assert!(!session.is_open());
     assert!(matches!(
@@ -225,7 +370,144 @@ async fn a_closed_session_is_neither_driven_nor_closed_again() {
         Err(neurun::Error::Closed { .. })
     ));
     assert!(matches!(
-        session.close().await,
+        session.human_click("button").await,
         Err(neurun::Error::Closed { .. })
     ));
+    assert!(matches!(
+        session.human_scroll_y(-400).await,
+        Err(neurun::Error::Closed { .. })
+    ));
+    assert!(matches!(
+        session.node("input").await,
+        Err(neurun::Error::Closed { .. })
+    ));
+    assert!(matches!(
+        session.close(false).await,
+        Err(neurun::Error::Closed { .. })
+    ));
+}
+
+#[tokio::test]
+async fn a_form_is_filled_in_the_way_a_person_would() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let mut session = browser.open("chrome").await.unwrap();
+    let field = session.node("input[name=email]").await.unwrap();
+    session
+        .human_scroll_y_to("input[name=email]")
+        .await
+        .unwrap();
+    session
+        .human_type_into("input[name=email]", "someone@example.com")
+        .await
+        .unwrap();
+    session.human_click("button[type=submit]").await.unwrap();
+    session.close(false).await.unwrap();
+
+    assert_eq!(field.node_id, 42);
+    assert_eq!(field.local_name, "input");
+    assert_eq!(field.attributes[0].value, "email");
+    assert_eq!(field.height, 40.0);
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.located[0].selector, "input[name=email]");
+    assert_eq!(
+        recorded.located[0].timeout_ms, 0,
+        "the short form looks once"
+    );
+    assert_eq!(
+        recorded.scrolled_to[0].align,
+        neurun::ScrollAlign::Center as i32,
+        "an element scrolled to without saying where lands in the middle"
+    );
+    assert_eq!(recorded.typed[0].selector, "input[name=email]");
+    assert_eq!(recorded.typed[0].text, "someone@example.com");
+    assert_eq!(
+        (
+            recorded.typed[0].delay_min_ms,
+            recorded.typed[0].delay_max_ms
+        ),
+        (0, 0),
+        "an unnamed pace is the browser's own, not one invented here"
+    );
+    assert_eq!(recorded.clicked[0].selector, "button[type=submit]");
+    assert_eq!(recorded.clicked[0].count, 1);
+    assert_eq!(
+        recorded.clicked[0].delay_ms, 0,
+        "an unnamed hold is drawn per click rather than fixed here"
+    );
+    assert!(
+        recorded.clicked[0].x.is_none() && recorded.clicked[0].y.is_none(),
+        "a selector travels instead of a point, not beside one"
+    );
+}
+
+#[tokio::test]
+async fn a_point_and_a_selector_are_different_ways_to_aim() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let mut session = browser.open("chrome").await.unwrap();
+    session.human_mouse_move(120.0, 480.0).await.unwrap();
+    session.human_mouse_move_to("a.more").await.unwrap();
+    session.human_click_at(120.0, 480.0).await.unwrap();
+    session
+        .human_click_with("a.more", neurun::MouseButton::Right, 2, 90)
+        .await
+        .unwrap();
+    session.human_scroll_y(-400).await.unwrap();
+    session.close(false).await.unwrap();
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.moved[0].x, Some(120.0));
+    assert_eq!(recorded.moved[0].y, Some(480.0));
+    assert!(recorded.moved[0].selector.is_empty());
+    assert_eq!(recorded.moved[1].selector, "a.more");
+    assert!(recorded.moved[1].x.is_none());
+
+    assert_eq!(recorded.clicked[0].x, Some(120.0));
+    assert_eq!(
+        recorded.clicked[1].button,
+        neurun::MouseButton::Right as i32
+    );
+    assert_eq!(recorded.clicked[1].count, 2);
+    assert_eq!(recorded.clicked[1].delay_ms, 90);
+
+    assert_eq!(
+        recorded.scrolled[0].delta_y, -400,
+        "scrolling up is a negative distance, which is why the field is signed"
+    );
+}
+
+#[tokio::test]
+async fn a_typing_range_the_wrong_way_round_is_refused_before_it_is_sent() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let mut session = browser.open("chrome").await.unwrap();
+    assert!(matches!(
+        session.human_type_with("input", "hello", 200, 50).await,
+        Err(neurun::Error::Configuration(_))
+    ));
+    assert!(
+        recorded.lock().unwrap().typed.is_empty(),
+        "a range that cannot be drawn from never leaves the process"
+    );
+    session.close(false).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_jar_goes_out_and_comes_back() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let mut session = browser.open("chrome").await.unwrap();
+    let jar = session.cookies().await.unwrap();
+    session.set_cookies(jar.clone()).await.unwrap();
+    session.close(false).await.unwrap();
+
+    assert_eq!(jar[0].name, "session");
+    assert!(jar[0].expires.is_none(), "a session cookie has no date");
+    assert_eq!(recorded.lock().unwrap().jarred[0].cookies[0].value, "abc");
 }

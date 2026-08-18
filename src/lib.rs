@@ -32,8 +32,35 @@
 //!
 //! Each command is its own call, shaped after the browser's own function —
 //! [`Session::navigate`] takes a URL, [`Session::wait_for_navigation`] a
-//! [`WaitUntil`] and a timeout. The set is small because the browser
-//! implements a small set, and it grows one command at a time.
+//! [`WaitUntil`] and a timeout. The set grows one command at a time, and a
+//! caller can read what it is allowed to do off this list.
+//!
+//! | | |
+//! | --- | --- |
+//! | [`navigate`](Session::navigate), [`wait_for_navigation`](Session::wait_for_navigation) | drive the page |
+//! | [`node`](Session::node) | what an element is, where it is, what it says |
+//! | [`human_mouse_move`](Session::human_mouse_move), [`human_click`](Session::human_click) | the pointer |
+//! | [`human_type`](Session::human_type) | the keyboard |
+//! | [`human_scroll_y`](Session::human_scroll_y), [`human_scroll_y_to`](Session::human_scroll_y_to) | the wheel |
+//! | [`cookies`](Session::cookies), [`set_cookies`](Session::set_cookies) | the jar |
+//!
+//! # Why the input is human
+//!
+//! A pointer that teleports, a key held for exactly the same number of
+//! milliseconds every time, a scroll that arrives in one jump — each is a thing
+//! no hand does, and each is cheap for a page to notice. The `human_` commands
+//! move along a curve drawn fresh every time, hold each key for a length drawn
+//! per key, and ease a scroll to a stop.
+//!
+//! They are slower for exactly that reason, and that is the trade. A whole
+//! gesture is one call rather than a stream of events, because the pacing has
+//! to happen beside the browser: an event per round trip across this connection
+//! would leave the network writing the rhythm.
+//!
+//! An element is named by CSS selector on every call and looked up again each
+//! time, so nothing here goes stale across a navigation. Where a command takes
+//! both a selector and a point, the selector wins — an element knows where it
+//! is, and a caller holding a rectangle from before the last scroll does not.
 //!
 //! # What a profile remembers
 //!
@@ -66,5 +93,5 @@ pub mod proto {
 }
 
 pub use error::{Error, Result};
-pub use proto::WaitUntil;
+pub use proto::{Attribute, Cookie, MouseButton, Node, ScrollAlign, WaitUntil};
 pub use session::{Browser, Session, SessionInfo, Token};

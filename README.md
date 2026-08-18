@@ -61,12 +61,54 @@ Both flags need a profile. Asking for either without one is an
 
 ## Commands
 
-Each command is its own call, shaped after the browser's own function —
-`navigate` takes a URL and, with `navigate_with`, an optional referer;
-`wait_for_navigation` takes a `WaitUntil` and a timeout through
-`wait_for_navigation_with`. The set is small because the browser implements a
-small set, and it grows one command at a time: a call this crate does not have
-is a call the browser does not support yet, not one silently ignored.
+Each command is its own call, shaped after the browser's own function. The set
+grows one command at a time: a call this crate does not have is a call the
+browser does not support yet, not one silently ignored.
+
+| | |
+| --- | --- |
+| `navigate`, `wait_for_navigation` | drive the page |
+| `node` | what an element is, where it is, what it says |
+| `human_mouse_move`, `human_mouse_move_to` | the pointer |
+| `human_click`, `human_click_at`, `human_click_with` | press it |
+| `human_type`, `human_type_into`, `human_type_with` | the keyboard |
+| `human_scroll_y`, `human_scroll_y_to` | the wheel |
+| `cookies`, `set_cookies` | the jar |
+
+The short form is the ordinary case and `_with` takes the full set — `navigate`
+against `navigate_with`, `human_click` against `human_click_with`.
+
+```rust
+session.human_scroll_y_to("input[name=email]").await?;
+session.human_type_into("input[name=email]", "someone@example.com").await?;
+session.human_click("button[type=submit]").await?;
+session.wait_for_navigation().await?;
+```
+
+### Elements are named by selector
+
+Every call takes a CSS selector and looks it up again, so nothing goes stale
+across a navigation and there is no handle to release. `node` reports the
+browser's own node id so two matches can be told apart — not so one can be
+addressed. Where a command takes both a selector and a point the selector wins:
+an element knows where it is, and a caller holding a rectangle from before the
+last scroll does not.
+
+### Why the input is human
+
+A pointer that teleports, a key held for exactly the same number of
+milliseconds every time, a scroll that arrives in one jump — each is a thing no
+hand does, and each is cheap for a page to notice. `human_mouse_move` walks a
+Bezier curve drawn fresh for the move; `human_click` holds the button for a
+length that is drawn rather than fixed; `human_type` draws a hold per key;
+`human_scroll_y` eases to a stop.
+
+They are slower for that reason, and that is the trade. A whole gesture is one
+call rather than a stream of events, because the pacing has to happen beside the
+browser — an event per round trip would leave the network writing the rhythm.
+
+`human_scroll_y` moves the y axis only. The browser's own scroll takes an x
+distance and drops it, and a field nothing reads is worse than no field.
 
 ## No heartbeat
 

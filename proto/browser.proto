@@ -26,9 +26,51 @@ service Browser {
   // WaitForNavigation blocks until the page the session is on has navigated.
   rpc WaitForNavigation(WaitForNavigationRequest) returns (WaitForNavigationResponse);
 
+  // GetNode reads the first element a selector matches.
+  rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+
+  // HumanMouseMove walks the pointer somewhere the way a hand would.
+  rpc HumanMouseMove(HumanMouseMoveRequest) returns (HumanMouseMoveResponse);
+
+  // HumanMouseClick walks the pointer somewhere and presses it.
+  rpc HumanMouseClick(HumanMouseClickRequest) returns (HumanMouseClickResponse);
+
+  // HumanType types, one key at a time, at a hand's pace.
+  rpc HumanType(HumanTypeRequest) returns (HumanTypeResponse);
+
+  // HumanScrollY turns the wheel down the page.
+  rpc HumanScrollY(HumanScrollYRequest) returns (HumanScrollYResponse);
+
+  // HumanScrollYTo turns the wheel until an element is where it was asked for.
+  rpc HumanScrollYTo(HumanScrollYToRequest) returns (HumanScrollYToResponse);
+
+  // GetCookies reads the session's whole jar.
+  //
+  // Browser-wide rather than per-origin, because that is what a profile keeps:
+  // a partial read written back would delete the rest.
+  rpc GetCookies(GetCookiesRequest) returns (GetCookiesResponse);
+
+  // SetCookies puts a jar into the session, on top of what it holds.
+  rpc SetCookies(SetCookiesRequest) returns (SetCookiesResponse);
+
   // CloseSession stops the browser and drops the session.
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+
+  // ReportResult hands back what the app produced.
+  //
+  // The token says which execution this is, so an app cannot report for another
+  // one. Reporting is what produces a result: an execution that exits without
+  // reporting produced none, and fails saying so.
+  rpc ReportResult(ReportResultRequest) returns (ReportResultResponse);
 }
+
+message ReportResultRequest {
+  // What the app returned, as JSON. The worker checks it against the
+  // execution's result limit and stores it verbatim.
+  bytes result = 1;
+}
+
+message ReportResultResponse {}
 
 message OpenSessionRequest {
   // chrome or safari. Read only when no profile is named: a profile's identity
@@ -91,6 +133,164 @@ enum WaitUntil {
   WAIT_UNTIL_NETWORK_ALMOST_IDLE = 4;
   WAIT_UNTIL_NETWORK_IDLE = 5;
 }
+
+message GetNodeRequest {
+  string session_id = 1;
+  // A CSS selector. The first element it matches is the one described.
+  string selector = 2;
+  // How long to keep looking. Zero looks once, which is the difference between
+  // an element that is not there and one that is not there yet.
+  uint32 timeout_ms = 3;
+}
+
+message GetNodeResponse {
+  Node node = 1;
+}
+
+// Node is an element as the browser found it, flattened. Children are not
+// carried: a caller that wants one asks for it by selector, and a subtree is a
+// response nobody sized.
+message Node {
+  // The browser's own id for it, valid until the document changes. Reported so
+  // a caller can tell two matches apart, not so it can address one — every
+  // command here names an element by selector.
+  int64 node_id = 1;
+  // The tag, as the DOM spells a local name: lower case for HTML.
+  string local_name = 2;
+  // The DOM's own numbering: 1 is an element, 3 is text.
+  uint32 node_type = 3;
+  repeated Attribute attributes = 4;
+  // What a reader would see, which is not the same as what the markup holds.
+  string text = 5;
+  string html = 6;
+  // The bounding box, in viewport coordinates, at the moment of the read. A
+  // scroll moves it, so it is worth no more than the instant it was taken.
+  double x = 7;
+  double y = 8;
+  double width = 9;
+  double height = 10;
+}
+
+message Attribute {
+  string name = 1;
+  string value = 2;
+}
+
+// MouseButton mirrors the browser's buttons. Unspecified is left, which is the
+// button anyone means when they do not say. The numbers are deliberately not
+// the browser's own — it starts left at zero, and zero here has to mean
+// unspecified — so this is translated by name rather than cast.
+enum MouseButton {
+  MOUSE_BUTTON_UNSPECIFIED = 0;
+  MOUSE_BUTTON_LEFT = 1;
+  MOUSE_BUTTON_MIDDLE = 2;
+  MOUSE_BUTTON_RIGHT = 3;
+  MOUSE_BUTTON_BACK = 4;
+  MOUSE_BUTTON_FORWARD = 5;
+}
+
+// ScrollAlign is where in the viewport an element should come to rest.
+// Unspecified is the centre, which is where a person scrolls something they
+// mean to look at.
+enum ScrollAlign {
+  SCROLL_ALIGN_UNSPECIFIED = 0;
+  SCROLL_ALIGN_TOP = 1;
+  SCROLL_ALIGN_CENTER = 2;
+  SCROLL_ALIGN_BOTTOM = 3;
+}
+
+message HumanMouseMoveRequest {
+  string session_id = 1;
+  // Viewport coordinates. Absent is not the same as zero, which is a corner of
+  // the page somebody might mean.
+  optional double x = 2;
+  optional double y = 3;
+  // An element to move to instead. Its centre replaces x and y, because an
+  // element knows where it is and a caller holding a stale rectangle does not.
+  string selector = 4;
+}
+
+message HumanMouseMoveResponse {}
+
+message HumanMouseClickRequest {
+  string session_id = 1;
+  optional double x = 2;
+  optional double y = 3;
+  // An element to click. Its centre replaces x and y.
+  string selector = 4;
+  MouseButton button = 5;
+  // Zero is one click. Two is a double click, with a pause between that is
+  // drawn rather than fixed.
+  uint32 count = 6;
+  // How long the button is held. Zero leaves it to be drawn per click, which is
+  // the point — a hold that is always the same is the tell.
+  uint32 delay_ms = 7;
+}
+
+message HumanMouseClickResponse {}
+
+message HumanTypeRequest {
+  string session_id = 1;
+  string text = 2;
+  // An element to type into. It is clicked, the same way the browser clicks
+  // anything, and the click is what focuses it — a page that would not accept
+  // the click would not have accepted the typing either.
+  string selector = 3;
+  // The gap between keys, drawn fresh for each one from this range. Both zero
+  // is an average typist. A range with min above max is refused rather than
+  // reordered.
+  uint32 delay_min_ms = 4;
+  uint32 delay_max_ms = 5;
+}
+
+message HumanTypeResponse {}
+
+message HumanScrollYRequest {
+  string session_id = 1;
+  // Down is positive. Only the y axis: the browser's scroll takes an x distance
+  // and drops it, and a field nothing reads is worse than no field.
+  sint32 delta_y = 2;
+}
+
+message HumanScrollYResponse {}
+
+message HumanScrollYToRequest {
+  string session_id = 1;
+  string selector = 2;
+  ScrollAlign align = 3;
+}
+
+message HumanScrollYToResponse {}
+
+// Cookie is one cookie as the browser holds it, in the profile's own shape.
+message Cookie {
+  string name = 1;
+  string value = 2;
+  string domain = 3;
+  string path = 4;
+  // Unix seconds. Absent for a session cookie.
+  optional double expires = 5;
+  bool secure = 6;
+  bool http_only = 7;
+  string same_site = 8;
+}
+
+message GetCookiesRequest {
+  string session_id = 1;
+}
+
+message GetCookiesResponse {
+  // The whole jar. Empty is ambiguous by nature — a browser holding nothing
+  // and a browser that would not say look the same from here.
+  repeated Cookie cookies = 1;
+}
+
+message SetCookiesRequest {
+  string session_id = 1;
+  repeated Cookie cookies = 2;
+}
+
+message SetCookiesResponse {}
 
 message CloseSessionRequest {
   string session_id = 1;
