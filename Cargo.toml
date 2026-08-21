@@ -9,9 +9,14 @@ categories = ["emulators", "security", "config", "development-tools::testing", "
 keywords = ["stealth", "infrastructure", "webdriver", "automation"]
 
 [dependencies]
+axum = "0.8.9"
+chrono = "0.4"
+croner = "3.0.1"
 prost = "0.14.4"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "time", "net"] }
 tonic = "0.14.6"
 tonic-prost = "0.14.6"
 

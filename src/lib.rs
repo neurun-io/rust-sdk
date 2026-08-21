@@ -81,7 +81,9 @@
 //! failure — a session left to expire shows the dashboard a browser that is not
 //! there until the lease runs out.
 
+mod app;
 pub mod error;
+mod serve;
 mod session;
 
 /// The control plane's gRPC contract, generated from `proto/browser.proto`.
@@ -92,6 +94,7 @@ pub mod proto {
     tonic::include_proto!("neurun.browser.v1");
 }
 
+pub use app::{App, Method, Overlap, Request, Response};
 pub use error::{Error, Result};
 pub use proto::{Attribute, Cookie, MouseButton, Node, ScrollAlign, WaitUntil};
 pub use session::{Browser, Session, SessionInfo, Token};

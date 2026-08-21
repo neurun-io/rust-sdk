@@ -27,6 +27,14 @@ pub enum Error {
     /// The session has already been closed.
     #[error("session {session_id} is already closed")]
     Closed { session_id: String },
+
+    /// A request reached a handler in a shape it could not read.
+    #[error("neurun: {0}")]
+    Request(String),
+
+    /// The app could not be run in the way it was asked to be.
+    #[error("neurun: {0}")]
+    Run(String),
 }
 
 impl Error {
