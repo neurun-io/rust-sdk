@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package neurun.memory.v1;
+
+option go_package = "github.com/neurun-io/neurun/internal/memorypb;memorypb";
+
+// Memory is the small facts a client's code keeps between runs — a key, a JSON
+// value, and optionally a moment it stops being true. It is served by the
+// control plane on loopback inside the worker, on the same listener as
+// browser.proto and document.proto.
+//
+// The organization is never in a request. It is resolved from the execution
+// token, and prefixed onto the key on our side, so there is no key a client can
+// write that reaches another client's memory.
+//
+// It is the shallow half of storage: there is no filter here, because an entry
+// is something you already know the name of.
+service Memory {
+  // Set writes a key, replacing whatever it held.
+  rpc Set(SetRequest) returns (Entry);
+
+  // Get reads one key.
+  rpc Get(GetRequest) returns (Entry);
+
+  // List reads the entries whose key starts with a prefix, by key.
+  rpc List(ListRequest) returns (ListResponse);
+
+  // Delete forgets a key. Forgetting one twice is not an error.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+}
+
+// Entry is one key and what it holds.
+//
+// There is no created_at: a write replaces, so the only honest timestamp is
+// when the value that is there now was put there.
+message Entry {
+  string key = 1;
+  // Any JSON value, encoded.
+  string value = 2;
+  int64 updated_at = 3;
+  // Zero when the entry was written without a ttl, which keeps it until
+  // something deletes it.
+  int64 expires_at = 4;
+}
+
+message SetRequest {
+  string key = 1;
+  // Any JSON value, encoded.
+  string value = 2;
+  // Zero keeps the entry until something deletes it.
+  uint32 ttl_seconds = 3;
+}
+
+message GetRequest {
+  string key = 1;
+}
+
+message ListRequest {
+  // Empty lists everything this organization has.
+  string prefix = 1;
+  uint32 limit = 2;
+}
+
+message ListResponse {
+  repeated Entry entries = 1;
+}
+
+message DeleteRequest {
+  string key = 1;
+}
+
+message DeleteResponse {}

@@ -1,6 +1,13 @@
 //! Neurun Rust SDK — what a program needs from Neurun while it runs.
 //!
-//! One thing, really: a browser.
+//! Three things: a browser, somewhere to put what it found, and somewhere to
+//! remember where it stopped.
+//!
+//! | | |
+//! | --- | --- |
+//! | [`Browser`] | a real browser, driven by session id |
+//! | [`Documents`] | JSON records in a collection, read back by filter |
+//! | [`Memory`] | a key, a value, and optionally an expiry |
 //!
 //! Neurun is the broker. A handler asks the control plane for a browser, gets a
 //! session id, and drives that id — it never learns where the browser runs and
@@ -14,19 +21,47 @@
 //! let mut session = Browser::from_env()?.open("chrome").await?;
 //! session.navigate("https://example.com").await?;
 //! session.wait_for_navigation().await?;
-//! session.close().await?;
+//! session.close(false).await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
 //! # Configuration
 //!
-//! [`Browser::from_env`] reads `NEURUN_GRPC_ADDRESS` and
-//! `NEURUN_EXECUTION_TOKEN`, which the worker puts in a handler's environment.
-//! That is the entire configuration: there is no app id, because an app id in
-//! an environment variable is a claim rather than a credential. The token
-//! travels in `neurun-execution-token` metadata on every call, and an address
-//! that is not loopback is refused — the token must not leave the host.
+//! [`Browser::from_env`], [`Documents::from_env`] and [`Memory::from_env`] all
+//! read `NEURUN_GRPC_ADDRESS` and `NEURUN_EXECUTION_TOKEN`, which the worker
+//! puts in a handler's environment. That is the entire configuration: there is
+//! no app id and no organization, because a value in an environment variable is
+//! a claim rather than a credential. The token travels in
+//! `neurun-execution-token` metadata on every call, and an address that is not
+//! loopback is refused — the token must not leave the host.
+//!
+//! The organization is resolved from that token on the other side, which is why
+//! storage needs no tenancy argument: there is no collection name and no key
+//! that reaches another client's data.
+//!
+//! # Storage
+//!
+//! ```no_run
+//! use neurun::{Documents, Error, Memory};
+//! use serde_json::json;
+//!
+//! # async fn example() -> Result<(), Error> {
+//! let mut people = Documents::from_env()?.collection("people");
+//! people.insert(&json!({"name": "ada", "age": 36})).await?;
+//! let found = people.find(&json!({"age": {"$gte": 30}})).await?;
+//!
+//! let memory = Memory::from_env()?;
+//! memory.set_with("cursor", &json!({"page": 4}), 3600).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! A collection is implicit: writing to a name creates it, and emptying it
+//! removes it. The filter grammar is small and closed — `$eq`, `$ne`, `$in`,
+//! `$gt`, `$gte`, `$lt`, `$lte`, `$exists` — and an operator outside it is
+//! refused rather than ignored, because a filter that quietly drops a clause
+//! matches more than was asked for.
 //!
 //! # Commands
 //!
@@ -82,11 +117,14 @@
 //! there until the lease runs out.
 
 mod app;
+mod connection;
+mod document;
 pub mod error;
+mod memory;
 mod serve;
 mod session;
 
-/// The control plane's gRPC contract, generated from `proto/browser.proto`.
+/// The browser contract, generated from `proto/browser.proto`.
 ///
 /// Generated rather than hand-written so that a field added upstream is a build
 /// failure here rather than a value silently dropped.
@@ -94,7 +132,24 @@ pub mod proto {
     tonic::include_proto!("neurun.browser.v1");
 }
 
+/// The document contract, generated from `proto/document.proto`.
+pub mod documents {
+    tonic::include_proto!("neurun.document.v1");
+}
+
+/// The memory contract, generated from `proto/memory.proto`.
+///
+/// Named `memories` rather than `memory` because [`memory`](crate::Memory) is
+/// the handle a caller uses, and a generated module is not what that word
+/// should reach.
+pub mod memories {
+    tonic::include_proto!("neurun.memory.v1");
+}
+
 pub use app::{App, Method, Overlap, Request, Response};
+pub use connection::Token;
+pub use document::{Collection, CollectionInfo, Document, Documents};
 pub use error::{Error, Result};
+pub use memory::{Entry, Memory};
 pub use proto::{Attribute, Cookie, MouseButton, Node, ScrollAlign, WaitUntil};
-pub use session::{Browser, Session, SessionInfo, Token};
+pub use session::{Browser, Session, SessionInfo};

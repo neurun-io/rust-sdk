@@ -1,6 +1,7 @@
 # Neurun Rust SDK
 
-Opens a browser session and drives it.
+Opens a browser session and drives it, stores what it found, and remembers
+where it stopped.
 
 That is the whole surface. Projects, apps, deployments and keys are made before
 a program runs; this is what a program needs while it is running.
@@ -137,17 +138,69 @@ The token travels in `neurun-execution-token` metadata on every call. An
 address that is not loopback is refused: the listener runs beside the handler,
 and a token must not leave the host.
 
+## Storage
+
+An execution ends and its process goes. Two places outlive it:
+
+```rust
+use neurun::{Documents, Memory};
+use serde_json::json;
+
+let mut people = Documents::from_env()?.collection("people");
+let stored = people.insert(&json!({"name": "ada", "age": 36})).await?;
+people.update(&stored.id, &json!({"age": 37})).await?;
+let found = people.find(&json!({"age": {"$gte": 30}})).await?;
+
+let memory = Memory::from_env()?;
+memory.set_with("cursor", &json!({"page": 4}), 3600).await?;
+let entry = memory.get("cursor").await?;
+```
+
+A **document** is a JSON record you query back. A **collection** is implicit —
+`collection()` reaches for a name and goes nowhere; writing to it is what
+creates it, and emptying it is what removes it.
+
+**Memory** is a key you already know the name of, in Redis, optionally with a
+ttl. There is no filter, because there is nothing to search.
+
+Bodies arrive as `serde_json::Value`, so reading one costs no annotation; call
+`parse::<T>()` for a shape you have declared. Neither client takes an
+organization — it is resolved from the execution token on the other side and
+prefixed onto every key, so a collection name and a memory key are safe to
+choose freely.
+
+### The filter
+
+Small and closed:
+
+```text
+{"name": "ada"}                  the field equals the value
+{"name": {"$ne": "ada"}}         it does not
+{"name": {"$in": ["ada", "g"]}}  it equals one of them
+{"age": {"$gte": 30}}            ordered comparison, also $gt $lt $lte
+{"email": {"$exists": true}}     the field is present
+```
+
+A dot walks into a nested object. Entries are ANDed; there is no `$or`. An
+operator outside that list is **refused, not ignored** — a filter that silently
+drops a clause matches more than you asked for, which is how a delete removes
+the wrong records.
+
+`update` merges shallowly and a JSON `null` removes a field; `replace` swaps the
+whole body, so a field left out is gone.
+
 ## Drift
 
-`proto/browser.proto` is a copy of the contract the control plane serves, and
-the client is generated from it at build time, so a field added upstream is a
-build failure here rather than a value quietly dropped.
+`proto/browser.proto`, `proto/document.proto` and `proto/memory.proto` are
+copies of the contracts the control plane serves, and the clients are generated
+from them at build time, so a field added upstream is a build failure here
+rather than a value quietly dropped.
 
-This is the SDK's whole contract: what `neurun-browser` speaks to the control
-plane is a separate file, `browserservice.proto`, that this crate never sees.
-The server side of `browser.proto` is generated too, though this crate is a
-client — it is what lets the tests stand a fake control plane up and drive the
-real loop against it.
+Three services, one listener, one credential. What `neurun-browser` speaks to
+the control plane is a separate file, `browserservice.proto`, that this crate
+never sees. The server sides are generated too, though this crate is a client —
+it is what lets the tests stand a fake control plane up and drive the real loop
+against it.
 
 ## Tests
 
@@ -160,4 +213,5 @@ cargo test
 No entrypoint annotation: the only deployment runtime is Python, and that
 annotation lives in the [Python SDK](../python-sdk). No project, app,
 deployment, build, user or API-key calls either — those belong to whoever sets
-things up, not to the program that runs afterwards.
+things up, not to the program that runs afterwards. No external storage: a
+bucket a client owns is not connected yet.

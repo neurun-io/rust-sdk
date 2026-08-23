@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package neurun.document.v1;
+
+option go_package = "github.com/neurun-io/neurun/internal/documentpb;documentpb";
+
+// Documents is the storage a client's own code keeps records in. It is served
+// by the control plane on loopback inside the worker, never on a routable
+// interface — the same listener browser.proto is served on.
+//
+// A document belongs to an organization, and the organization is never in a
+// request: it is resolved from the execution token the worker minted, so there
+// is no collection name a client can send that reaches another client's data.
+//
+// A collection is implicit. Nothing declares one, so inserting into a name
+// creates it and emptying it removes it.
+service Documents {
+  // Insert writes a new document and returns it with the id it was given.
+  rpc Insert(InsertRequest) returns (Document);
+
+  // Get reads one document by id.
+  rpc Get(GetRequest) returns (Document);
+
+  // Find reads the documents a filter matches, newest first.
+  rpc Find(FindRequest) returns (FindResponse);
+
+  // Replace swaps a document's whole body. A field left out is gone.
+  rpc Replace(ReplaceRequest) returns (Document);
+
+  // Update writes the named fields and leaves the rest. A JSON null removes a
+  // field, which is the only way to delete one without rewriting the document.
+  rpc Update(UpdateRequest) returns (Document);
+
+  // Delete removes one document.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // ListCollections names what this organization has stored, and how much is in
+  // each.
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+}
+
+// Document is one JSON object.
+//
+// The body travels as encoded JSON rather than as a protobuf Struct: a Struct
+// cannot carry an integer that stays an integer, and a client that stored 1 is
+// owed 1 rather than 1.0 when it reads back.
+message Document {
+  string id = 1;
+  string collection = 2;
+  // A JSON object.
+  string data = 3;
+  int64 created_at = 4;
+  int64 updated_at = 5;
+}
+
+message InsertRequest {
+  string collection = 1;
+  // A JSON object.
+  string data = 2;
+}
+
+message GetRequest {
+  string collection = 1;
+  string document_id = 2;
+}
+
+// FindRequest carries the filter as encoded JSON, in the same small grammar the
+// HTTP surface takes:
+//
+//   {"name": "ada"}                  the field equals the value
+//   {"name": {"$ne": "ada"}}         it does not
+//   {"name": {"$in": ["ada", "g"]}}  it equals one of them
+//   {"age": {"$gte": 30}}            ordered comparison
+//   {"email": {"$exists": true}}     the field is present
+//
+// A dot walks into a nested object. An empty filter matches the collection. An
+// operator that is not in that list is refused rather than ignored, because a
+// filter that silently drops a clause matches more than was asked for.
+message FindRequest {
+  string collection = 1;
+  // A JSON object, or empty for everything in the collection.
+  string filter = 2;
+  uint32 limit = 3;
+}
+
+message FindResponse {
+  repeated Document documents = 1;
+}
+
+message ReplaceRequest {
+  string collection = 1;
+  string document_id = 2;
+  // A JSON object.
+  string data = 3;
+}
+
+message UpdateRequest {
+  string collection = 1;
+  string document_id = 2;
+  // A JSON object holding only the fields to write.
+  string data = 3;
+}
+
+message DeleteRequest {
+  string collection = 1;
+  string document_id = 2;
+}
+
+message DeleteResponse {}
+
+message ListCollectionsRequest {
+  uint32 limit = 1;
+}
+
+message Collection {
+  string name = 1;
+  int64 documents = 2;
+}
+
+message ListCollectionsResponse {
+  repeated Collection collections = 1;
+}
