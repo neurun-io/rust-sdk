@@ -109,7 +109,9 @@ impl Request {
 
     /// A header by name, matched without regard to case.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.get(&name.to_ascii_lowercase()).map(String::as_str)
+        self.headers
+            .get(&name.to_ascii_lowercase())
+            .map(String::as_str)
     }
 
     pub fn body(&self) -> &[u8] {
@@ -163,7 +165,8 @@ impl Response {
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 type EndpointFn = Arc<dyn Fn(Request) -> BoxFuture<Response> + Send + Sync>;
 type ScheduleFn = Arc<dyn Fn() -> BoxFuture<()> + Send + Sync>;
-type EntrypointFn = Arc<dyn Fn(serde_json::Value) -> BoxFuture<Result<serde_json::Value, Error>> + Send + Sync>;
+type EntrypointFn =
+    Arc<dyn Fn(serde_json::Value) -> BoxFuture<Result<serde_json::Value, Error>> + Send + Sync>;
 
 pub(crate) struct Endpoint {
     pub(crate) method: Method,
@@ -235,7 +238,12 @@ impl App {
     /// The schedule belongs to the process: it is kept by the running server
     /// rather than by the control plane, so it exists exactly as long as the
     /// server does and there is nothing to fire when it is gone.
-    pub fn cron<F, Fut>(self, name: impl Into<String>, expression: impl Into<String>, handler: F) -> Self
+    pub fn cron<F, Fut>(
+        self,
+        name: impl Into<String>,
+        expression: impl Into<String>,
+        handler: F,
+    ) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = ()> + Send + 'static,
@@ -354,6 +362,7 @@ pub(crate) fn parse_method(raw: &str) -> Option<Method> {
 pub(crate) fn listen_address() -> Result<SocketAddr, Error> {
     let raw = std::env::var("NEURUN_LISTEN_ADDRESS")
         .map_err(|_| Error::Configuration("NEURUN_LISTEN_ADDRESS is not set".into()))?;
-    raw.parse()
-        .map_err(|_| Error::Configuration(format!("NEURUN_LISTEN_ADDRESS {raw:?} is not an address")))
+    raw.parse().map_err(|_| {
+        Error::Configuration(format!("NEURUN_LISTEN_ADDRESS {raw:?} is not an address"))
+    })
 }

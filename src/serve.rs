@@ -1,8 +1,8 @@
 //! Running a declared app: once, or until it is stopped.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
