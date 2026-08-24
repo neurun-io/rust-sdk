@@ -56,6 +56,26 @@ service Browser {
   // CloseSession stops the browser and drops the session.
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
 
+  // ListProfiles finds the profiles the organization has, newest first.
+  //
+  // Enough to choose one and open it, and no more: cookies and the identity
+  // stay behind, because a run picking a profile has no use for the credential
+  // it holds.
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+
+  // GetProfile reads one, by id.
+  rpc GetProfile(GetProfileRequest) returns (Profile);
+
+  // UpdateProfile changes one.
+  //
+  // Meta is the only field a run may change. Anything else is refused with
+  // PERMISSION_DENIED, because the profile a run was handed is the profile the
+  // account meant it to wear — renaming it from inside a run is how two of them
+  // end up fighting over what it is. Setting force applies the change anyway,
+  // and the answer still carries a neurun-warning header saying what got
+  // through: forcing silences the refusal, not the warning.
+  rpc UpdateProfile(UpdateProfileRequest) returns (Profile);
+
   // ReportResult hands back what the app produced.
   //
   // The token says which execution this is, so an app cannot report for another
@@ -300,3 +320,64 @@ message CloseSessionRequest {
 }
 
 message CloseSessionResponse {}
+
+// MetaEntry is one label. Declared as a repeated message rather than a proto
+// map so the order it is read in is the order it was sent in, and so a client
+// that writes its own messages has one shape to encode rather than two.
+message MetaEntry {
+  string key = 1;
+  string value = 2;
+}
+
+// Profile is a persona as a run needs to see it: enough to recognise one and
+// name it to OpenSession. What it wears and what it remembers are not here.
+message Profile {
+  string id = 1;
+  string name = 2;
+  string browser = 3;
+  repeated MetaEntry meta = 4;
+  // Unix seconds.
+  int64 created_at = 5;
+  int64 updated_at = 6;
+}
+
+message ListProfilesRequest {
+  // Matched, case-insensitively, against a profile's id, name, browser and
+  // meta — keys and values both. Empty matches every profile, which is the
+  // whole list rather than none of it.
+  string query = 1;
+  // Zero takes the server's own page size.
+  uint32 limit = 2;
+}
+
+message ListProfilesResponse {
+  repeated Profile profiles = 1;
+}
+
+message GetProfileRequest {
+  string browser_profile_id = 1;
+}
+
+// UpdateProfileRequest can ask for any of a Profile's writable fields. Which of
+// them a run is allowed to change is the server's answer, not this message's
+// shape: everything but meta needs force.
+message UpdateProfileRequest {
+  string browser_profile_id = 1;
+  // Absent leaves the name alone. Present renames.
+  optional string name = 2;
+  // Absent leaves the browser alone. Present redraws the whole identity for
+  // that browser, because the fields of one are bound together — a Safari that
+  // kept a Chrome's platform strings is the contradiction a detector is looking
+  // for — so there is no changing this one field alone.
+  optional string browser = 3;
+  // The labels to write. Empty writes nothing, unless replace_meta says to
+  // empty the map.
+  repeated MetaEntry meta = 4;
+  // Replace swaps the whole map, which is how a key is removed. Without it the
+  // entries sent are written and the rest are left alone — two runs labelling
+  // the same profile know different things, and neither should erase the
+  // other's.
+  bool replace_meta = 5;
+  // Apply the fields a run may not change instead of refusing them.
+  bool force = 6;
+}

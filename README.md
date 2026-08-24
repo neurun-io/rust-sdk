@@ -44,6 +44,57 @@ session.close_with(true).await?;
 `open` takes a browser and no profile; `open_with` wears one. An empty profile
 id is a plain browser, which is the ordinary case.
 
+## Finding a profile, and labelling it
+
+`profiles` searches the organization's profiles and returns every one when given
+nothing to search for:
+
+```rust
+let browser = Browser::from_env()?;
+
+for found in browser.profiles("").await? {
+    println!("{} {} {:?}", found.id, found.name, found.meta);
+}
+
+let shoppers = browser.profiles("ada@").await?;
+```
+
+The term is matched, case-insensitively, against a profile's id, name, browser
+and meta — keys and values both.
+
+`meta` is the account's own labels: whatever is worth keeping about a profile
+that Neurun has no opinion on. Writing merges, so a run that learns one fact
+does not erase what another run knew:
+
+```rust
+browser
+    .update_profile("bp_01J...", ProfileUpdate::meta([("last_run", "2026-08-25")]))
+    .await?;
+```
+
+`ProfileUpdate::replacing_meta` swaps the whole map instead, which is how a key
+is removed. Nothing redacts meta, so it is the wrong place for a credential.
+
+**Meta is the only field a run may change.** `name` and `browser` describe the
+persona the account chose, so asking for them comes back `PermissionDenied`
+unless `ProfileUpdate::forced` says the caller meant it. Forcing silences the
+refusal, not the warning — which is why the answer is a `Warned<Profile>`. It
+derefs to the profile, so a caller that does not care reads straight through it:
+
+```rust
+let updated = browser
+    .update_profile(
+        "bp_01J...",
+        ProfileUpdate { name: Some("renamed".into()), ..Default::default() }.forced(),
+    )
+    .await?;
+
+if let Some(warning) = updated.warning() {
+    eprintln!("{warning}");
+}
+println!("{}", updated.name);
+```
+
 ## What a profile remembers
 
 A profile is where a session's state lives between runs, and both directions

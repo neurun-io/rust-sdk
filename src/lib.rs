@@ -151,5 +151,5 @@ pub use connection::Token;
 pub use document::{Collection, CollectionInfo, Document, Documents};
 pub use error::{Error, Result};
 pub use memory::{Entry, Memory};
-pub use proto::{Attribute, Cookie, MouseButton, Node, ScrollAlign, WaitUntil};
-pub use session::{Browser, Session, SessionInfo};
+pub use proto::{Attribute, Cookie, MetaEntry, MouseButton, Node, Profile, ScrollAlign, WaitUntil};
+pub use session::{Browser, ProfileUpdate, Session, SessionInfo, Warned};

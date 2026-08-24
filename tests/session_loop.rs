@@ -6,17 +6,19 @@
 
 use std::sync::{Arc, Mutex};
 
-use neurun::Browser;
+use neurun::proto::GetProfileRequest;
 use neurun::proto::browser_server::{Browser as BrowserService, BrowserServer};
 use neurun::proto::{
     Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, GetCookiesRequest,
     GetCookiesResponse, GetNodeRequest, GetNodeResponse, HumanMouseClickRequest,
     HumanMouseClickResponse, HumanMouseMoveRequest, HumanMouseMoveResponse, HumanScrollYRequest,
     HumanScrollYResponse, HumanScrollYToRequest, HumanScrollYToResponse, HumanTypeRequest,
-    HumanTypeResponse, NavigateRequest, NavigateResponse, Node, OpenSessionRequest,
-    ReportResultRequest, ReportResultResponse, Session as ProtoSession, SetCookiesRequest,
-    SetCookiesResponse, WaitForNavigationRequest, WaitForNavigationResponse,
+    HumanTypeResponse, ListProfilesRequest, ListProfilesResponse, MetaEntry, NavigateRequest,
+    NavigateResponse, Node, OpenSessionRequest, Profile, ReportResultRequest, ReportResultResponse,
+    Session as ProtoSession, SetCookiesRequest, SetCookiesResponse, UpdateProfileRequest,
+    WaitForNavigationRequest, WaitForNavigationResponse,
 };
+use neurun::{Browser, ProfileUpdate};
 use tokio::net::TcpListener;
 use tonic::{Request, Response, Status};
 
@@ -33,7 +35,23 @@ struct Recorded {
     scrolled_to: Vec<HumanScrollYToRequest>,
     jarred: Vec<SetCookiesRequest>,
     closed: Vec<CloseSessionRequest>,
+    listed: Vec<ListProfilesRequest>,
+    updated: Vec<UpdateProfileRequest>,
     tokens: Vec<String>,
+}
+
+fn profile() -> Profile {
+    Profile {
+        id: "bp_1".into(),
+        name: "shopper".into(),
+        browser: "chrome".into(),
+        meta: vec![MetaEntry {
+            key: "login".into(),
+            value: "ada@example.com".into(),
+        }],
+        created_at: 1_800_000_000,
+        updated_at: 1_800_000_100,
+    }
 }
 
 struct FakeControlPlane {
@@ -249,6 +267,54 @@ impl BrowserService for FakeControlPlane {
             .closed
             .push(request.into_inner());
         Ok(Response::new(CloseSessionResponse {}))
+    }
+
+    async fn list_profiles(
+        &self,
+        request: Request<ListProfilesRequest>,
+    ) -> Result<Response<ListProfilesResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .listed
+            .push(request.into_inner());
+        Ok(Response::new(ListProfilesResponse {
+            profiles: vec![profile()],
+        }))
+    }
+
+    async fn get_profile(
+        &self,
+        request: Request<GetProfileRequest>,
+    ) -> Result<Response<Profile>, Status> {
+        self.token(&request)?;
+        Ok(Response::new(profile()))
+    }
+
+    // The door's own rule, mirrored: meta is a run's to change and the rest is
+    // not, so anything else is refused unless force says the caller meant it —
+    // and forcing still warns.
+    async fn update_profile(
+        &self,
+        request: Request<UpdateProfileRequest>,
+    ) -> Result<Response<Profile>, Status> {
+        self.token(&request)?;
+        let asked = request.into_inner();
+        let reserved = asked.name.is_some() || asked.browser.is_some();
+        if reserved && !asked.force {
+            return Err(Status::permission_denied(
+                "a run may change a browser profile's meta and nothing else",
+            ));
+        }
+        let mut answer = Response::new(profile());
+        if reserved {
+            answer
+                .metadata_mut()
+                .insert("neurun-warning", "forced a change to name".parse().unwrap());
+        }
+        self.recorded.lock().unwrap().updated.push(asked);
+        Ok(answer)
     }
 }
 
@@ -510,4 +576,97 @@ async fn a_jar_goes_out_and_comes_back() {
     assert_eq!(jar[0].name, "session");
     assert!(jar[0].expires.is_none(), "a session cookie has no date");
     assert_eq!(recorded.lock().unwrap().jarred[0].cookies[0].value, "abc");
+}
+
+#[tokio::test]
+async fn an_empty_query_asks_for_every_profile() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let found = browser.profiles("").await.unwrap();
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, "bp_1");
+    assert_eq!(found[0].meta[0].key, "login");
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.listed[0].query, "");
+    assert_eq!(recorded.listed[0].limit, 0);
+}
+
+#[tokio::test]
+async fn a_query_and_a_page_size_travel() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    browser.profiles_with("ada", 10).await.unwrap();
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.listed[0].query, "ada");
+    assert_eq!(recorded.listed[0].limit, 10);
+}
+
+#[tokio::test]
+async fn one_profile_is_read_by_id() {
+    let (address, _) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let found = browser.profile("bp_1").await.unwrap();
+
+    assert_eq!(found.name, "shopper");
+}
+
+#[tokio::test]
+async fn meta_is_written_and_merges_unless_told_otherwise() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let answer = browser
+        .update_profile("bp_1", ProfileUpdate::meta([("ticket", "OPS-4")]))
+        .await
+        .unwrap();
+
+    assert_eq!(answer.id, "bp_1");
+    assert_eq!(answer.warning(), None);
+    let recorded = recorded.lock().unwrap();
+    let asked = &recorded.updated[0];
+    assert_eq!(asked.browser_profile_id, "bp_1");
+    assert_eq!(asked.meta[0].value, "OPS-4");
+    assert!(!asked.replace_meta);
+    assert!(asked.name.is_none());
+}
+
+#[tokio::test]
+async fn a_rename_is_refused_until_it_is_forced_and_warned_about_even_then() {
+    let (address, _) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let refused = browser
+        .update_profile(
+            "bp_1",
+            ProfileUpdate {
+                name: Some("renamed".into()),
+                ..ProfileUpdate::default()
+            },
+        )
+        .await;
+    assert!(matches!(
+        refused,
+        Err(neurun::Error::Neurun(ref status))
+            if status.code() == tonic::Code::PermissionDenied
+    ));
+
+    let forced = browser
+        .update_profile(
+            "bp_1",
+            ProfileUpdate {
+                name: Some("renamed".into()),
+                ..ProfileUpdate::default()
+            }
+            .forced(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(forced.warning(), Some("forced a change to name"));
+    assert_eq!(forced.id, "bp_1");
 }

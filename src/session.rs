@@ -15,6 +15,8 @@
 //! There is no heartbeat. Driving a session renews its lease, because a browser
 //! being commanded is a browser that is alive.
 
+use std::ops::Deref;
+
 use tonic::Status;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
@@ -23,11 +25,17 @@ use crate::connection::{Connection, Token};
 use crate::error::{Error, Result};
 use crate::proto::browser_client::BrowserClient;
 use crate::proto::{
-    CloseSessionRequest, Cookie, GetCookiesRequest, GetNodeRequest, HumanMouseClickRequest,
-    HumanMouseMoveRequest, HumanScrollYRequest, HumanScrollYToRequest, HumanTypeRequest,
-    MouseButton, NavigateRequest, Node, OpenSessionRequest, ScrollAlign, SetCookiesRequest,
+    CloseSessionRequest, Cookie, GetCookiesRequest, GetNodeRequest, GetProfileRequest,
+    HumanMouseClickRequest, HumanMouseMoveRequest, HumanScrollYRequest, HumanScrollYToRequest,
+    HumanTypeRequest, ListProfilesRequest, MetaEntry, MouseButton, NavigateRequest, Node,
+    OpenSessionRequest, Profile, ScrollAlign, SetCookiesRequest, UpdateProfileRequest,
     WaitForNavigationRequest, WaitUntil,
 };
+
+/// Where an answer says what it let through that it would rather have refused.
+/// gRPC carries it, so no message has a warning field and nothing has to be
+/// parsed out of a success.
+pub const WARNING_HEADER: &str = "neurun-warning";
 
 type Client = BrowserClient<InterceptedService<Channel, Token>>;
 
@@ -112,9 +120,170 @@ impl Browser {
         })
     }
 
+    /// Finds the organization's browser profiles, newest first.
+    ///
+    /// `query` is matched, case-insensitively, against a profile's id, name,
+    /// browser and meta — keys and values both. Empty matches every profile, so
+    /// this is the whole list as well as the search.
+    pub async fn profiles(&self, query: impl Into<String>) -> Result<Vec<Profile>> {
+        self.profiles_with(query, 0).await
+    }
+
+    /// The same, with a page size. Zero takes the server's own.
+    pub async fn profiles_with(
+        &self,
+        query: impl Into<String>,
+        limit: u32,
+    ) -> Result<Vec<Profile>> {
+        let mut client = self.connect().await?;
+        let found = client
+            .list_profiles(ListProfilesRequest {
+                query: query.into(),
+                limit,
+            })
+            .await?
+            .into_inner();
+        Ok(found.profiles)
+    }
+
+    /// Reads one profile by id.
+    pub async fn profile(&self, profile_id: impl Into<String>) -> Result<Profile> {
+        let mut client = self.connect().await?;
+        Ok(client
+            .get_profile(GetProfileRequest {
+                browser_profile_id: profile_id.into(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    /// Changes a profile.
+    ///
+    /// Meta is the only field a run may change. The rest describes the persona
+    /// the account chose, so asking for it comes back
+    /// [`PermissionDenied`](tonic::Code::PermissionDenied) unless
+    /// [`ProfileUpdate::force`] says the caller meant it — and even then the
+    /// answer carries a warning, which is why this returns a [`Warned`].
+    pub async fn update_profile(
+        &self,
+        profile_id: impl Into<String>,
+        update: ProfileUpdate,
+    ) -> Result<Warned<Profile>> {
+        let mut client = self.connect().await?;
+        let answer = client
+            .update_profile(UpdateProfileRequest {
+                browser_profile_id: profile_id.into(),
+                name: update.name,
+                browser: update.browser,
+                meta: update.meta,
+                replace_meta: update.replace_meta,
+                force: update.force,
+            })
+            .await?;
+        let warning = answer
+            .metadata()
+            .get(WARNING_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        Ok(Warned {
+            value: answer.into_inner(),
+            warning,
+        })
+    }
+
     async fn connect(&self) -> Result<Client> {
         let (channel, token) = self.connection.open().await?;
         Ok(BrowserClient::with_interceptor(channel, token))
+    }
+}
+
+/// A change to a browser profile, field by field.
+///
+/// Meta is the only field a run may change; the rest need [`force`](Self::force).
+#[derive(Debug, Clone, Default)]
+pub struct ProfileUpdate {
+    /// The labels to write. Empty writes nothing, unless `replace_meta` says to
+    /// empty the map.
+    pub meta: Vec<MetaEntry>,
+    /// Swap the whole map, which is how a key is removed. Without it the keys
+    /// given are written and the rest are left alone — two runs labelling the
+    /// same profile know different things, and neither should erase the
+    /// other's.
+    pub replace_meta: bool,
+    /// A rename, which is not a run's to make.
+    pub name: Option<String>,
+    /// Redraws the whole identity for that browser, because the fields of one
+    /// are bound together and there is no swapping this one alone.
+    pub browser: Option<String>,
+    /// Apply the fields a run may not change instead of being refused them.
+    pub force: bool,
+}
+
+impl ProfileUpdate {
+    /// Writes these labels over whatever the profile already holds.
+    pub fn meta<K, V>(entries: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        Self {
+            meta: entries
+                .into_iter()
+                .map(|(key, value)| MetaEntry {
+                    key: key.into(),
+                    value: value.into(),
+                })
+                .collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Makes these labels the whole map, dropping any key not named.
+    pub fn replacing_meta<K, V>(entries: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        Self {
+            replace_meta: true,
+            ..Self::meta(entries)
+        }
+    }
+
+    /// Applies the fields a run may not otherwise change.
+    pub fn forced(mut self) -> Self {
+        self.force = true;
+        self
+    }
+}
+
+/// An answer, and what the control plane warned about while giving it.
+///
+/// Derefs to the answer, so a caller that does not care reads straight through
+/// it. One that does asks for [`warning`](Self::warning) — forcing a change
+/// silences the refusal, not the warning.
+#[derive(Debug, Clone)]
+pub struct Warned<T> {
+    value: T,
+    warning: Option<String>,
+}
+
+impl<T> Warned<T> {
+    /// What the answer warned about, if anything.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning.as_deref()
+    }
+
+    pub fn into_inner(self) -> T {
+        self.value
+    }
+}
+
+impl<T> Deref for Warned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
     }
 }
 
