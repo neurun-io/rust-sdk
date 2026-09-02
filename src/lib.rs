@@ -121,6 +121,7 @@ mod connection;
 mod document;
 pub mod error;
 mod memory;
+mod parser;
 mod serve;
 mod session;
 
@@ -146,10 +147,20 @@ pub mod memories {
     tonic::include_proto!("neurun.memory.v1");
 }
 
+/// The parser contract, generated from `proto/parser.proto`.
+///
+/// Named `parsers` rather than `parser` because [`Parsers`](crate::Parsers) is
+/// the handle a caller uses, and a generated module is not what that word
+/// should reach.
+pub mod parsers {
+    tonic::include_proto!("neurun.parser.v1");
+}
+
 pub use app::{App, Method, Overlap, Request, Response};
 pub use connection::Token;
 pub use document::{Collection, CollectionInfo, Document, Documents};
 pub use error::{Error, Result};
 pub use memory::{Entry, Memory};
+pub use parser::{ParseResult, Parsers, Probe};
 pub use proto::{Attribute, Cookie, MetaEntry, MouseButton, Node, Profile, ScrollAlign, WaitUntil};
 pub use session::{Browser, ProfileUpdate, Session, SessionInfo, Warned};

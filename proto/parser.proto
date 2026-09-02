@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package neurun.parser.v1;
+
+option go_package = "github.com/neurun-io/neurun/internal/parserpb;parserpb";
+
+// Parsers picks data out of a page the handler already holds. It is served by
+// the control plane on loopback inside the worker, on the same listener as
+// browser.proto, document.proto and memory.proto.
+//
+// The plane never fetches the page. The caller sends the HTML it has, which is
+// what keeps a parse free of egress, robots and proxy policy: fetching is the
+// browser service's job, and parsing is this. An app that wants both does both,
+// in that order.
+//
+// Neither the organization nor the project is in a request. Both are resolved
+// from the execution token, which is what makes a parser name safe to write
+// into a handler: there is no name that reaches another client's parsers.
+service Parsers {
+  // Parse runs a stored parser over a document.
+  rpc Parse(ParseRequest) returns (ParseResponse);
+}
+
+message ParseRequest {
+  // The parser's name, which is unique inside the project the token resolves
+  // to. A handler holds a name rather than an id because the name is what
+  // survives the parser being rewritten.
+  string parser = 1;
+  // The document, at most 4 MB. Past that it is a download, not a page.
+  string html = 2;
+}
+
+message ParseResponse {
+  // The parsed document, JSON encoded. It is a string rather than a structured
+  // field because the output keeps the order the definition declares, and
+  // there is no proto shape that carries an order and arbitrary keys at once.
+  string output = 1;
+  // What each field saw, one per field.
+  repeated Probe probes = 2;
+  // What each parent matched, including a parent no field points at yet.
+  repeated Probe scopes = 3;
+  // What the parse itself took, measured around it on this side. It is the
+  // cost of the work rather than of the call, which is the number the caller
+  // cannot time for themselves.
+  int64 elapsed_micros = 4;
+}
+
+// Probe is what one row saw: enough to tell a selector that matched the wrong
+// element from one that matched nothing.
+//
+// It carries its own key rather than sitting in a map, so probes and scopes are
+// ordinary repeated fields — and a probe read on its own still says where it
+// sat.
+//
+// There is no error field: a stored parser was validated on write, so a
+// selector that does not compile never reaches a parse.
+message Probe {
+  // A field's path in the output — `money.amount` — or a parent's name.
+  string path = 1;
+  // Totalled across every element the parent matched, not per element.
+  uint32 matches = 2;
+  // Which of the selectors the page answered to. With several written, knowing
+  // a node matched is not knowing what it read.
+  string selector = 3;
+  // The first value found, truncated.
+  string sample = 4;
+}

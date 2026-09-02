@@ -240,14 +240,46 @@ the wrong records.
 `update` merges shallowly and a JSON `null` removes a field; `replace` swaps the
 whole body, so a field left out is gone.
 
+## Parsing
+
+Where to pick data out of a page, kept as a definition because the selectors for
+a site outlive any one handler that scrapes it:
+
+```rust
+use neurun::Parsers;
+
+let parsed = Parsers::from_env()?.parse("product-card", html).await?;
+
+let title = &parsed.output["title"];
+let matched = parsed.probes["title"].matches;
+let cost = parsed.elapsed;
+```
+
+The plane never fetches the page. You send the HTML you already have, which is
+what keeps a parse free of egress, robots and proxy policy: fetching is the
+browser's job and parsing is this, and an app that wants both does both, in that
+order.
+
+A parser is addressed by **name**, unique inside the project the execution token
+resolves to. So a name written into a handler reaches nothing outside its own
+project, and it survives the definition behind it being rewritten.
+
+Every parse comes back with **probes**: one per field, keyed by its path in the
+output, carrying how many elements it matched, which of its selectors did the
+matching, and the first value it read. It is what tells a selector that matched
+the wrong element from one that matched nothing, which a scrape that silently
+went empty needs as much as a builder does. `scopes` is the same, one per
+parent. `elapsed` is what the parse itself took, measured on the other side, so
+it is the cost of the work rather than of the call.
+
 ## Drift
 
-`proto/browser.proto`, `proto/document.proto` and `proto/memory.proto` are
-copies of the contracts the control plane serves, and the clients are generated
-from them at build time, so a field added upstream is a build failure here
-rather than a value quietly dropped.
+`proto/browser.proto`, `proto/document.proto`, `proto/memory.proto` and
+`proto/parser.proto` are copies of the contracts the control plane serves, and
+the clients are generated from them at build time, so a field added upstream is
+a build failure here rather than a value quietly dropped.
 
-Three services, one listener, one credential. What `neurun-browser` speaks to
+Four services, one listener, one credential. What `neurun-browser` speaks to
 the control plane is a separate file, `browserservice.proto`, that this crate
 never sees. The server sides are generated too, though this crate is a client —
 it is what lets the tests stand a fake control plane up and drive the real loop

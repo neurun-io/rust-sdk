@@ -4,10 +4,11 @@
 //! Generating rather than hand-writing the messages is what makes drift a
 //! compile error rather than a value quietly dropped on the floor.
 
-const CONTRACTS: [&str; 3] = [
+const CONTRACTS: [&str; 4] = [
     "proto/browser.proto",
     "proto/document.proto",
     "proto/memory.proto",
+    "proto/parser.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

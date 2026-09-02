@@ -126,6 +126,16 @@ impl Request {
 
 /// What a handler answers with. Status, headers and body are the app's to
 /// choose: the control plane routes the request and reads none of it.
+///
+/// TODO(response): the chaining stops at `header`, so every app writes the same
+/// few helpers over the top of it — set a status, set a content type, swap a
+/// body that has already been built. Give it those, but by *extension* rather
+/// than by reshaping. The fields below are `pub` and `new` and `json` are
+/// inherent constructors, so a builder proper — private fields, a
+/// `Response::builder()`, a terminal `build()` — breaks every construction and
+/// every field read in every app at once. More `self`-consuming methods beside
+/// `header`, or a trait carrying them, buys the same ergonomics and breaks
+/// nobody.
 #[derive(Debug, Clone)]
 pub struct Response {
     pub status: u16,
