@@ -25,11 +25,11 @@ use crate::connection::{Connection, Token};
 use crate::error::{Error, Result};
 use crate::proto::browser_client::BrowserClient;
 use crate::proto::{
-    CloseSessionRequest, Cookie, GetCookiesRequest, GetNodeRequest, GetProfileRequest,
-    HumanMouseClickRequest, HumanMouseMoveRequest, HumanScrollYRequest, HumanScrollYToRequest,
-    HumanTypeRequest, ListProfilesRequest, MetaEntry, MouseButton, NavigateRequest, Node,
-    OpenSessionRequest, Profile, ScrollAlign, SetCookiesRequest, UpdateProfileRequest,
-    WaitForNavigationRequest, WaitUntil,
+    CloseSessionRequest, Cookie, EvalJsRequest, GetCookiesRequest, GetNodeRequest,
+    GetProfileRequest, HumanMouseClickRequest, HumanMouseMoveRequest, HumanScrollYRequest,
+    HumanScrollYToRequest, HumanTypeRequest, ListProfilesRequest, MetaEntry, MouseButton,
+    NavigateRequest, Node, OpenSessionRequest, Profile, ScrollAlign, ScrollIntoViewRequest,
+    SetCookiesRequest, UpdateProfileRequest, WaitForNavigationRequest, WaitUntil,
 };
 
 /// Where an answer says what it let through that it would rather have refused.
@@ -614,6 +614,74 @@ impl Session {
             })
             .await?;
         Ok(())
+    }
+
+    /// Puts the first element `selector` matches in the middle of the viewport,
+    /// at once.
+    pub async fn scroll_into_view(&mut self, selector: impl Into<String>) -> Result<()> {
+        self.scroll_into_view_with(selector, ScrollAlign::Center)
+            .await
+    }
+
+    /// Puts the element where `align` asks for it, at once.
+    ///
+    /// The same aim as [`human_scroll_y_to_with`](Self::human_scroll_y_to_with)
+    /// taken a different way: the jump is instant and nothing about it looks
+    /// like a hand. Reach for it where the scrolling is a means to a later
+    /// command rather than something a page is meant to watch.
+    pub async fn scroll_into_view_with(
+        &mut self,
+        selector: impl Into<String>,
+        align: ScrollAlign,
+    ) -> Result<()> {
+        self.open_or_closed()?;
+        self.client
+            .scroll_into_view(ScrollIntoViewRequest {
+                session_id: self.info.id.clone(),
+                selector: selector.into(),
+                align: align as i32,
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Runs a JavaScript expression in the page and hands back its value.
+    pub async fn eval_js<T: serde::de::DeserializeOwned>(
+        &mut self,
+        expression: impl Into<String>,
+    ) -> Result<T> {
+        self.eval_js_with(expression, false).await
+    }
+
+    /// Runs the expression, waiting for a promise it evaluates to when
+    /// `await_promise` says to.
+    ///
+    /// An expression, not a program: it is evaluated for the value it produces,
+    /// so a statement is a syntax error rather than a value of nothing. Without
+    /// `await_promise` a promise is the value, and a promise is a handle
+    /// nothing outside the page can read. What the page threw comes back as the
+    /// error, because a script that failed and one that returned nothing must
+    /// not read alike.
+    pub async fn eval_js_with<T: serde::de::DeserializeOwned>(
+        &mut self,
+        expression: impl Into<String>,
+        await_promise: bool,
+    ) -> Result<T> {
+        self.open_or_closed()?;
+        let evaluated = self
+            .client
+            .eval_js(EvalJsRequest {
+                session_id: self.info.id.clone(),
+                expression: expression.into(),
+                await_promise,
+            })
+            .await?
+            .into_inner();
+        serde_json::from_slice(&evaluated.result).map_err(|err| {
+            Error::Neurun(Status::internal(format!(
+                "the page's value is not the shape this call asked for: {err}"
+            )))
+        })
     }
 
     /// Reads the browser's whole cookie jar.

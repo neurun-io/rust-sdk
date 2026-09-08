@@ -125,6 +125,8 @@ browser does not support yet, not one silently ignored.
 | `human_click`, `human_click_at`, `human_click_with` | press it |
 | `human_type`, `human_type_into`, `human_type_with` | the keyboard |
 | `human_scroll_y`, `human_scroll_y_to` | the wheel |
+| `scroll_into_view` | the same aim, jumped rather than turned |
+| `eval_js` | what the page's own scripts would see |
 | `cookies`, `set_cookies` | the jar |
 
 The short form is the ordinary case and `_with` takes the full set — `navigate`
@@ -135,7 +137,17 @@ session.human_scroll_y_to("input[name=email]").await?;
 session.human_type_into("input[name=email]", "someone@example.com").await?;
 session.human_click("button[type=submit]").await?;
 session.wait_for_navigation().await?;
+
+let ids: Vec<String> = session
+    .eval_js("[...document.querySelectorAll('.row')].map(r => r.id)")
+    .await?;
 ```
+
+`scroll_into_view` and `eval_js` are the two commands that are not human, and
+both say so in their names. Reach for either where the driving is a means to
+something else rather than something a page is meant to watch. `eval_js` takes
+an expression, not a program, and deserializes what the page produced into
+whatever type the call asks for.
 
 ### Elements are named by selector
 

@@ -9,14 +9,14 @@ use std::sync::{Arc, Mutex};
 use neurun::proto::GetProfileRequest;
 use neurun::proto::browser_server::{Browser as BrowserService, BrowserServer};
 use neurun::proto::{
-    Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, GetCookiesRequest,
-    GetCookiesResponse, GetNodeRequest, GetNodeResponse, HumanMouseClickRequest,
+    Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, EvalJsRequest, EvalJsResponse,
+    GetCookiesRequest, GetCookiesResponse, GetNodeRequest, GetNodeResponse, HumanMouseClickRequest,
     HumanMouseClickResponse, HumanMouseMoveRequest, HumanMouseMoveResponse, HumanScrollYRequest,
     HumanScrollYResponse, HumanScrollYToRequest, HumanScrollYToResponse, HumanTypeRequest,
     HumanTypeResponse, ListProfilesRequest, ListProfilesResponse, MetaEntry, NavigateRequest,
     NavigateResponse, Node, OpenSessionRequest, Profile, ReportResultRequest, ReportResultResponse,
-    Session as ProtoSession, SetCookiesRequest, SetCookiesResponse, UpdateProfileRequest,
-    WaitForNavigationRequest, WaitForNavigationResponse,
+    ScrollIntoViewRequest, ScrollIntoViewResponse, Session as ProtoSession, SetCookiesRequest,
+    SetCookiesResponse, UpdateProfileRequest, WaitForNavigationRequest, WaitForNavigationResponse,
 };
 use neurun::{Browser, ProfileUpdate};
 use tokio::net::TcpListener;
@@ -33,6 +33,8 @@ struct Recorded {
     typed: Vec<HumanTypeRequest>,
     scrolled: Vec<HumanScrollYRequest>,
     scrolled_to: Vec<HumanScrollYToRequest>,
+    jumped_to: Vec<ScrollIntoViewRequest>,
+    evaluated: Vec<EvalJsRequest>,
     jarred: Vec<SetCookiesRequest>,
     closed: Vec<CloseSessionRequest>,
     listed: Vec<ListProfilesRequest>,
@@ -214,6 +216,34 @@ impl BrowserService for FakeControlPlane {
             .scrolled_to
             .push(request.into_inner());
         Ok(Response::new(HumanScrollYToResponse {}))
+    }
+
+    async fn scroll_into_view(
+        &self,
+        request: Request<ScrollIntoViewRequest>,
+    ) -> Result<Response<ScrollIntoViewResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .jumped_to
+            .push(request.into_inner());
+        Ok(Response::new(ScrollIntoViewResponse {}))
+    }
+
+    async fn eval_js(
+        &self,
+        request: Request<EvalJsRequest>,
+    ) -> Result<Response<EvalJsResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .evaluated
+            .push(request.into_inner());
+        Ok(Response::new(EvalJsResponse {
+            result: br#"{"title":"Example"}"#.to_vec(),
+        }))
     }
 
     async fn get_cookies(
@@ -507,6 +537,40 @@ async fn a_form_is_filled_in_the_way_a_person_would() {
         recorded.clicked[0].x.is_none() && recorded.clicked[0].y.is_none(),
         "a selector travels instead of a point, not beside one"
     );
+}
+
+/// The two commands that are not shaped after a hand.
+#[tokio::test]
+async fn a_page_can_be_read_without_pretending_to_be_a_person() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    #[derive(serde::Deserialize)]
+    struct Page {
+        title: String,
+    }
+
+    let mut session = browser.open("chrome").await.unwrap();
+    session.scroll_into_view("#row-42").await.unwrap();
+    let page: Page = session.eval_js("({title: document.title})").await.unwrap();
+    let raw: serde_json::Value = session.eval_js_with("fetch('/x')", true).await.unwrap();
+    session.close(false).await.unwrap();
+
+    assert_eq!(page.title, "Example", "the page's value is parsed, not raw");
+    assert_eq!(raw["title"], "Example");
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.jumped_to[0].selector, "#row-42");
+    assert_eq!(
+        recorded.jumped_to[0].align,
+        neurun::ScrollAlign::Center as i32,
+        "the jump takes the same aim as the wheel"
+    );
+    assert!(
+        !recorded.evaluated[0].await_promise,
+        "the short form does not wait for a promise"
+    );
+    assert!(recorded.evaluated[1].await_promise);
 }
 
 #[tokio::test]

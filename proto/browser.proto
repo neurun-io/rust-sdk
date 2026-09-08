@@ -44,6 +44,12 @@ service Browser {
   // HumanScrollYTo turns the wheel until an element is where it was asked for.
   rpc HumanScrollYTo(HumanScrollYToRequest) returns (HumanScrollYToResponse);
 
+  // ScrollIntoView puts an element on screen at once, without the wheel.
+  rpc ScrollIntoView(ScrollIntoViewRequest) returns (ScrollIntoViewResponse);
+
+  // EvalJS runs an expression in the page and hands back what it evaluated to.
+  rpc EvalJS(EvalJSRequest) returns (EvalJSResponse);
+
   // GetCookies reads the session's whole jar.
   //
   // Browser-wide rather than per-origin, because that is what a profile keeps:
@@ -281,6 +287,39 @@ message HumanScrollYToRequest {
 }
 
 message HumanScrollYToResponse {}
+
+// ScrollIntoViewRequest takes the same aim as HumanScrollYToRequest and gets
+// there a different way: the jump is instant and nothing about it looks like a
+// hand. Reach for it to put an element where a later command can work on it,
+// and for HumanScrollYTo when the scrolling is itself meant to be seen.
+message ScrollIntoViewRequest {
+  string session_id = 1;
+  string selector = 2;
+  ScrollAlign align = 3;
+}
+
+message ScrollIntoViewResponse {}
+
+// EvalJSRequest is the one command that is not shaped after a hand. Everything
+// else here moves a pointer or a key because that is what a page is watching
+// for; this reads the page the way the page's own scripts do, which is worth
+// having and worth reaching for last.
+message EvalJSRequest {
+  string session_id = 1;
+  // A JavaScript expression, not a program: it is evaluated for the value it
+  // produces, so a statement is a syntax error rather than a value of nothing.
+  string expression = 2;
+  // Wait for a promise the expression evaluates to and hand back what it
+  // resolved with. Without it a promise is the answer, and a promise is a
+  // handle nothing here can read.
+  bool await_promise = 3;
+}
+
+message EvalJSResponse {
+  // What the expression evaluated to, as JSON. Undefined is written as null,
+  // because a caller reading JSON should get JSON rather than nothing at all.
+  bytes result = 1;
+}
 
 // Cookie is one cookie as the browser holds it, in the profile's own shape.
 message Cookie {

@@ -77,6 +77,8 @@
 //! | [`human_mouse_move`](Session::human_mouse_move), [`human_click`](Session::human_click) | the pointer |
 //! | [`human_type`](Session::human_type) | the keyboard |
 //! | [`human_scroll_y`](Session::human_scroll_y), [`human_scroll_y_to`](Session::human_scroll_y_to) | the wheel |
+//! | [`scroll_into_view`](Session::scroll_into_view) | the same aim, jumped rather than turned |
+//! | [`eval_js`](Session::eval_js) | what the page's own scripts would see |
 //! | [`cookies`](Session::cookies), [`set_cookies`](Session::set_cookies) | the jar |
 //!
 //! # Why the input is human
@@ -96,6 +98,11 @@
 //! time, so nothing here goes stale across a navigation. Where a command takes
 //! both a selector and a point, the selector wins — an element knows where it
 //! is, and a caller holding a rectangle from before the last scroll does not.
+//!
+//! [`scroll_into_view`](Session::scroll_into_view) and
+//! [`eval_js`](Session::eval_js) are the two that are not human, and both say
+//! so in their names: reach for them where the driving is a means to something
+//! else rather than something a page is meant to watch.
 //!
 //! # What a profile remembers
 //!
