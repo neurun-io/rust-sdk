@@ -10,7 +10,8 @@ use neurun::proto::GetProfileRequest;
 use neurun::proto::browser_server::{Browser as BrowserService, BrowserServer};
 use neurun::proto::{
     Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, EvalJsRequest, EvalJsResponse,
-    GetCookiesRequest, GetCookiesResponse, GetNodeRequest, GetNodeResponse, HumanMouseClickRequest,
+    GetCookiesRequest, GetCookiesResponse, GetNodeRequest, GetNodeResponse, GetNodesRequest,
+    GetNodesResponse, HumanMouseClickRequest,
     HumanMouseClickResponse, HumanMouseMoveRequest, HumanMouseMoveResponse, HumanScrollYRequest,
     HumanScrollYResponse, HumanScrollYToRequest, HumanScrollYToResponse, HumanTypeRequest,
     HumanTypeResponse, ListProfilesRequest, ListProfilesResponse, MetaEntry, NavigateRequest,
@@ -151,6 +152,34 @@ impl BrowserService for FakeControlPlane {
                 height: 40.0,
             }),
         }))
+    }
+
+    async fn get_nodes(
+        &self,
+        request: Request<GetNodesRequest>,
+    ) -> Result<Response<GetNodesResponse>, Status> {
+        self.token(&request)?;
+        let selector = request.into_inner().selector;
+        // Two of whatever was asked for, so a caller can tell a list apart from
+        // the single element `get_node` answers with.
+        let nodes = (1..=2)
+            .map(|nth| Node {
+                node_id: nth,
+                local_name: "article".into(),
+                node_type: 1,
+                attributes: vec![Attribute {
+                    name: "data-nth".into(),
+                    value: nth.to_string(),
+                }],
+                text: String::new(),
+                html: format!("<article>{selector} {nth}</article>"),
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            })
+            .collect();
+        Ok(Response::new(GetNodesResponse { nodes }))
     }
 
     async fn human_mouse_move(
@@ -474,7 +503,11 @@ async fn a_closed_session_is_neither_driven_nor_closed_again() {
         Err(neurun::Error::Closed { .. })
     ));
     assert!(matches!(
-        session.node("input").await,
+        session.find_node("input").await,
+        Err(neurun::Error::Closed { .. })
+    ));
+    assert!(matches!(
+        session.find_nodes("input").await,
         Err(neurun::Error::Closed { .. })
     ));
     assert!(matches!(
@@ -484,12 +517,30 @@ async fn a_closed_session_is_neither_driven_nor_closed_again() {
 }
 
 #[tokio::test]
+async fn a_list_is_read_whole_rather_than_one_element_at_a_time() {
+    let (address, _) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+
+    let mut session = browser.open("chrome").await.unwrap();
+    let one = session.find_node("article").await.unwrap();
+    let all = session.find_nodes("article").await.unwrap();
+    session.close(false).await.unwrap();
+
+    // The singular answers with an element; the plural answers with however
+    // many there were, which is the question it was asked.
+    assert_eq!(one.local_name, "input");
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].html, "<article>article 1</article>");
+    assert_eq!(all[1].html, "<article>article 2</article>");
+}
+
+#[tokio::test]
 async fn a_form_is_filled_in_the_way_a_person_would() {
     let (address, recorded) = control_plane().await;
     let browser = Browser::new(address, "net_exe_secret").unwrap();
 
     let mut session = browser.open("chrome").await.unwrap();
-    let field = session.node("input[name=email]").await.unwrap();
+    let field = session.find_node("input[name=email]").await.unwrap();
     session
         .human_scroll_y_to("input[name=email]")
         .await

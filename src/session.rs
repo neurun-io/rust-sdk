@@ -25,7 +25,7 @@ use crate::connection::{Connection, Token};
 use crate::error::{Error, Result};
 use crate::proto::browser_client::BrowserClient;
 use crate::proto::{
-    CloseSessionRequest, Cookie, EvalJsRequest, GetCookiesRequest, GetNodeRequest,
+    CloseSessionRequest, Cookie, EvalJsRequest, GetCookiesRequest, GetNodeRequest, GetNodesRequest,
     GetProfileRequest, HumanMouseClickRequest, HumanMouseMoveRequest, HumanScrollYRequest,
     HumanScrollYToRequest, HumanTypeRequest, ListProfilesRequest, MetaEntry, MouseButton,
     NavigateRequest, Node, OpenSessionRequest, Profile, ScrollAlign, ScrollIntoViewRequest,
@@ -385,8 +385,34 @@ impl Session {
     }
 
     /// Describes the first element `selector` matches, looking once.
-    pub async fn node(&mut self, selector: impl Into<String>) -> Result<Node> {
-        self.node_with(selector, 0).await
+    pub async fn find_node(&mut self, selector: impl Into<String>) -> Result<Node> {
+        self.wait_for_node(selector, 0).await
+    }
+
+    /// Describes every element `selector` matches, in the order the document
+    /// holds them.
+    ///
+    /// Empty where nothing matched, and that is the difference from
+    /// [`Session::find_node`]: asking for all of something is asking how many
+    /// there are, and none is an answer to that rather than a failure to
+    /// answer.
+    ///
+    /// What this is for is a page whose interesting part is a list — every card
+    /// in a feed, every row in a table. Reading the document instead costs the
+    /// head, the scripts and the chrome on every pass, and a caller that walks
+    /// a feed pays that for each screen of it.
+    pub async fn find_nodes(&mut self, selector: impl Into<String>) -> Result<Vec<Node>> {
+        self.open_or_closed()?;
+        let found = self
+            .client
+            .get_nodes(GetNodesRequest {
+                session_id: self.info.id.clone(),
+                selector: selector.into(),
+                timeout_ms: 0,
+            })
+            .await?
+            .into_inner();
+        Ok(found.nodes)
     }
 
     /// Describes the first element `selector` matches, waiting up to
@@ -394,7 +420,7 @@ impl Session {
     ///
     /// Zero looks once, which is the difference between an element that is not
     /// there and one that is not there yet.
-    pub async fn node_with(
+    pub async fn wait_for_node(
         &mut self,
         selector: impl Into<String>,
         timeout_ms: u32,

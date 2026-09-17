@@ -29,6 +29,9 @@ service Browser {
   // GetNode reads the first element a selector matches.
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
 
+  // GetNodes reads every element a selector matches.
+  rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
+
   // HumanMouseMove walks the pointer somewhere the way a hand would.
   rpc HumanMouseMove(HumanMouseMoveRequest) returns (HumanMouseMoveResponse);
 
@@ -171,6 +174,25 @@ message GetNodeRequest {
 
 message GetNodeResponse {
   Node node = 1;
+}
+
+message GetNodesRequest {
+  string session_id = 1;
+  // A CSS selector. Every element it matches is described, in the order the
+  // document holds them.
+  string selector = 2;
+  // How long to keep looking for a first match. Zero looks once. The wait is
+  // for one element and not for all of them: a list that is still filling has
+  // no count to wait for, and the caller reading it again is what asks for the
+  // rest.
+  uint32 timeout_ms = 3;
+}
+
+message GetNodesResponse {
+  // Empty where nothing matched. A selector that matches no element is an
+  // answer here, unlike GetNode, where it is an error: a caller asking for all
+  // of something is asking how many there are.
+  repeated Node nodes = 1;
 }
 
 // Node is an element as the browser found it, flattened. Children are not
