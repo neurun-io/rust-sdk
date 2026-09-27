@@ -25,11 +25,12 @@ use crate::connection::{Connection, Token};
 use crate::error::{Error, Result};
 use crate::proto::browser_client::BrowserClient;
 use crate::proto::{
-    CloseSessionRequest, Cookie, EvalJsRequest, GetCookiesRequest, GetNodeRequest, GetNodesRequest,
-    GetProfileRequest, HumanMouseClickRequest, HumanMouseMoveRequest, HumanScrollYRequest,
-    HumanScrollYToRequest, HumanTypeRequest, ListProfilesRequest, MetaEntry, MouseButton,
-    NavigateRequest, Node, OpenSessionRequest, Profile, ScrollAlign, ScrollIntoViewRequest,
-    SetCookiesRequest, UpdateProfileRequest, WaitForNavigationRequest, WaitUntil,
+    CloseSessionRequest, Cookie, EmulateBrowserRequestRequest, EmulateBrowserResponse,
+    EvalJsRequest, GetCookiesRequest, GetNodeRequest, GetNodesRequest, GetProfileRequest,
+    HumanMouseClickRequest, HumanMouseMoveRequest, HumanScrollYRequest, HumanScrollYToRequest,
+    HumanTypeRequest, ListProfilesRequest, MetaEntry, MouseButton, NavigateRequest, Node,
+    OpenSessionRequest, Profile, ScrollAlign, ScrollIntoViewRequest, SetCookiesRequest,
+    UpdateProfileRequest, WaitForNavigationRequest, WaitUntil,
 };
 
 /// Where an answer says what it let through that it would rather have refused.
@@ -118,6 +119,20 @@ impl Browser {
             },
             is_open: true,
         })
+    }
+
+    /// Makes one standalone HTTP request using a supported browser network
+    /// profile. A JSON object payload with a form content type is form encoded;
+    /// other payload bytes are sent as given. This does not open a session.
+    /// `proxy_url` accepts a literal HTTP(S) URL or a pool shorthand such as
+    /// `resid_long.dataimpulse.DE`; the control plane resolves the shorthand
+    /// within this execution's organization.
+    pub async fn emulate_browser_request(
+        &self,
+        request: EmulateBrowserRequestRequest,
+    ) -> Result<EmulateBrowserResponse> {
+        let mut client = self.connect().await?;
+        Ok(client.emulate_browser_request(request).await?.into_inner())
     }
 
     /// Finds the organization's browser profiles, newest first.

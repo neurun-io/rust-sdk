@@ -9,15 +9,16 @@ use std::sync::{Arc, Mutex};
 use neurun::proto::GetProfileRequest;
 use neurun::proto::browser_server::{Browser as BrowserService, BrowserServer};
 use neurun::proto::{
-    Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, EvalJsRequest, EvalJsResponse,
-    GetCookiesRequest, GetCookiesResponse, GetNodeRequest, GetNodeResponse, GetNodesRequest,
-    GetNodesResponse, HumanMouseClickRequest,
-    HumanMouseClickResponse, HumanMouseMoveRequest, HumanMouseMoveResponse, HumanScrollYRequest,
-    HumanScrollYResponse, HumanScrollYToRequest, HumanScrollYToResponse, HumanTypeRequest,
-    HumanTypeResponse, ListProfilesRequest, ListProfilesResponse, MetaEntry, NavigateRequest,
-    NavigateResponse, Node, OpenSessionRequest, Profile, ReportResultRequest, ReportResultResponse,
-    ScrollIntoViewRequest, ScrollIntoViewResponse, Session as ProtoSession, SetCookiesRequest,
-    SetCookiesResponse, UpdateProfileRequest, WaitForNavigationRequest, WaitForNavigationResponse,
+    Attribute, CloseSessionRequest, CloseSessionResponse, Cookie, EmulateBrowserRequestRequest,
+    EmulateBrowserResponse, EvalJsRequest, EvalJsResponse, GetCookiesRequest, GetCookiesResponse,
+    GetNodeRequest, GetNodeResponse, GetNodesRequest, GetNodesResponse, HttpHeader,
+    HumanMouseClickRequest, HumanMouseClickResponse, HumanMouseMoveRequest, HumanMouseMoveResponse,
+    HumanScrollYRequest, HumanScrollYResponse, HumanScrollYToRequest, HumanScrollYToResponse,
+    HumanTypeRequest, HumanTypeResponse, ListProfilesRequest, ListProfilesResponse, MetaEntry,
+    NavigateRequest, NavigateResponse, Node, OpenSessionRequest, Profile, ReportResultRequest,
+    ReportResultResponse, ScrollIntoViewRequest, ScrollIntoViewResponse, Session as ProtoSession,
+    SetCookiesRequest, SetCookiesResponse, UpdateProfileRequest, WaitForNavigationRequest,
+    WaitForNavigationResponse,
 };
 use neurun::{Browser, ProfileUpdate};
 use tokio::net::TcpListener;
@@ -26,6 +27,7 @@ use tonic::{Request, Response, Status};
 #[derive(Default)]
 struct Recorded {
     opened: Vec<OpenSessionRequest>,
+    emulated: Vec<EmulateBrowserRequestRequest>,
     navigated: Vec<NavigateRequest>,
     waited: Vec<WaitForNavigationRequest>,
     located: Vec<GetNodeRequest>,
@@ -97,6 +99,26 @@ impl BrowserService for FakeControlPlane {
         };
         self.recorded.lock().unwrap().opened.push(request);
         Ok(Response::new(session))
+    }
+
+    async fn emulate_browser_request(
+        &self,
+        request: Request<EmulateBrowserRequestRequest>,
+    ) -> Result<Response<EmulateBrowserResponse>, Status> {
+        self.token(&request)?;
+        self.recorded
+            .lock()
+            .unwrap()
+            .emulated
+            .push(request.into_inner());
+        Ok(Response::new(EmulateBrowserResponse {
+            status: 201,
+            headers: vec![HttpHeader {
+                name: "x-result".into(),
+                value: b"yes".to_vec(),
+            }],
+            body: b"created".to_vec(),
+        }))
     }
 
     async fn navigate(
@@ -391,6 +413,53 @@ async fn control_plane() -> (String, Arc<Mutex<Recorded>>) {
             .await
     });
     (address, recorded)
+}
+
+#[tokio::test]
+async fn standalone_emulation_sends_the_network_profile_and_proxy() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+    let response = browser
+        .emulate_browser_request(EmulateBrowserRequestRequest {
+            browser: "chrome".into(),
+            browser_version: 153,
+            os: "linux".into(),
+            method: "POST".into(),
+            url: "https://example.com/api".into(),
+            headers: vec![HttpHeader {
+                name: "x-test".into(),
+                value: b"one".to_vec(),
+            }],
+            payload: Some(Vec::new()),
+            proxy_url: "http://proxy.example:8080".into(),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(response.status, 201);
+    assert_eq!(response.headers[0].value, b"yes");
+    assert_eq!(response.body, b"created");
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.emulated.len(), 1);
+    assert_eq!(recorded.emulated[0].browser_version, 153);
+    assert_eq!(recorded.emulated[0].payload, Some(Vec::new()));
+    assert_eq!(recorded.emulated[0].proxy_url, "http://proxy.example:8080");
+    assert_eq!(recorded.tokens, vec!["net_exe_secret"]);
+}
+
+#[tokio::test]
+async fn standalone_emulation_sends_pool_shorthand_for_resolution() {
+    let (address, recorded) = control_plane().await;
+    let browser = Browser::new(address, "net_exe_secret").unwrap();
+    browser
+        .emulate_browser_request(EmulateBrowserRequestRequest {
+            proxy_url: "resid_long.dataimpulse.DE".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.emulated[0].proxy_url, "resid_long.dataimpulse.DE");
 }
 
 #[tokio::test]

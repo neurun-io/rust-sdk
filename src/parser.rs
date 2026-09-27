@@ -12,9 +12,8 @@
 //! # }
 //! ```
 //!
-//! The plane never fetches the page. The HTML is the one the handler already
-//! has, which is what keeps a parse free of egress, robots and proxy policy:
-//! fetching is [`Browser`](crate::Browser)'s job, and parsing is this.
+//! The plane never fetches the document. The handler sends HTML or JSON it
+//! already has; fetching is the caller's job, and parsing is this.
 //!
 //! Neither the organization nor the project is sent. Both are resolved from the
 //! execution token on the other side, which is what makes a parser name safe to
@@ -112,22 +111,40 @@ impl Parsers {
         self.connection.address()
     }
 
-    /// Runs a stored parser over a document.
+    /// Runs a stored HTML parser over a document.
     ///
     /// `parser` is the name it was created with, which is what survives the
-    /// definition behind it being rewritten. `html` is at most 4 MB: past that
+    /// definition behind it being rewritten. `html` is at most 8 MB: past that
     /// it is a download, not a page.
     pub async fn parse(
         &self,
         parser: impl Into<String>,
         html: impl Into<String>,
     ) -> Result<ParseResult> {
+        self.parse_document(parser.into(), html.into(), String::new())
+            .await
+    }
+
+    /// Runs a stored JSON parser over raw JSON text of at most 8 MB.
+    /// Raw text preserves integer precision in transit.
+    pub async fn parse_json(
+        &self,
+        parser: impl Into<String>,
+        json: impl Into<String>,
+    ) -> Result<ParseResult> {
+        self.parse_document(parser.into(), String::new(), json.into())
+            .await
+    }
+
+    async fn parse_document(
+        &self,
+        parser: String,
+        html: String,
+        json: String,
+    ) -> Result<ParseResult> {
         let mut client = self.connect().await?;
         let answer = client
-            .parse(ParseRequest {
-                parser: parser.into(),
-                html: html.into(),
-            })
+            .parse(ParseRequest { parser, html, json })
             .await?
             .into_inner();
         let output = serde_json::from_str(&answer.output)

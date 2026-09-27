@@ -111,6 +111,11 @@ be happy to keep, not one that failed halfway through a sign-in.
 Both flags need a profile. Asking for either without one is an
 `Error::Configuration`, refused before the call goes out.
 
+A standalone `Browser::emulate_browser_request` accepts a literal proxy URL
+or a pool shorthand in `proxy_url`, such as `resid_long.dataimpulse.DE`.
+The control plane resolves the shorthand within this execution's
+organization before making the request.
+
 ## Commands
 
 Each command is its own call, shaped after the browser's own function. The set
@@ -267,10 +272,17 @@ let matched = parsed.probes["title"].matches;
 let cost = parsed.elapsed;
 ```
 
-The plane never fetches the page. You send the HTML you already have, which is
-what keeps a parse free of egress, robots and proxy policy: fetching is the
-browser's job and parsing is this, and an app that wants both does both, in that
-order.
+For a JSON parser, send raw JSON text with `parse_json`:
+
+```rust
+let parsed = Parsers::from_env()?
+    .parse_json("product-json", r#"{"count":9007199254740993}"#)
+    .await?;
+```
+
+The plane never fetches the document. Send HTML or JSON you already have;
+fetching is the caller's job and parsing is this. Raw JSON text preserves number
+precision in transit.
 
 A parser is addressed by **name**, unique inside the project the execution token
 resolves to. So a name written into a handler reaches nothing outside its own

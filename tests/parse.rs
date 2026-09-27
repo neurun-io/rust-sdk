@@ -103,6 +103,22 @@ async fn a_parse_carries_the_name_the_document_and_the_token() {
     let recorded = recorded.lock().unwrap();
     assert_eq!(recorded.parsed[0].parser, "product-card");
     assert_eq!(recorded.parsed[0].html, "<h1>Trainers</h1>");
+    assert!(recorded.parsed[0].json.is_empty());
+    assert_eq!(recorded.tokens[0], "net_exe_secret");
+}
+
+#[tokio::test]
+async fn a_json_parse_carries_raw_text_and_the_token() {
+    let (address, recorded) = control_plane().await;
+    let parsers = Parsers::new(address, "net_exe_secret").unwrap();
+    let json = r#"{"count":9007199254740993}"#;
+
+    parsers.parse_json("product-json", json).await.unwrap();
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.parsed[0].parser, "product-json");
+    assert_eq!(recorded.parsed[0].json, json);
+    assert!(recorded.parsed[0].html.is_empty());
     assert_eq!(recorded.tokens[0], "net_exe_secret");
 }
 

@@ -8,10 +8,9 @@ option go_package = "github.com/neurun-io/neurun/internal/parserpb;parserpb";
 // the control plane on loopback inside the worker, on the same listener as
 // browser.proto, document.proto and memory.proto.
 //
-// The plane never fetches the page. The caller sends the HTML it has, which is
-// what keeps a parse free of egress, robots and proxy policy: fetching is the
-// browser service's job, and parsing is this. An app that wants both does both,
-// in that order.
+// The plane never fetches the document. The caller sends the HTML or JSON it
+// has, which keeps a parse free of egress, robots and proxy policy: fetching is
+// the caller's job, and parsing is this.
 //
 // Neither the organization nor the project is in a request. Both are resolved
 // from the execution token, which is what makes a parser name safe to write
@@ -26,8 +25,11 @@ message ParseRequest {
   // to. A handler holds a name rather than an id because the name is what
   // survives the parser being rewritten.
   string parser = 1;
-  // The document, at most 4 MB. Past that it is a download, not a page.
+  // An HTML document, at most 8 MB. Used by HTML parsers.
   string html = 2;
+  // A JSON document encoded as text, at most 8 MB. Used by JSON parsers. It is
+  // text rather than google.protobuf.Value so integer precision is preserved.
+  string json = 3;
 }
 
 message ParseResponse {

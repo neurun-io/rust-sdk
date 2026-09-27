@@ -20,6 +20,9 @@ service Browser {
   // OpenSession spawns a browser and returns the session it created.
   rpc OpenSession(OpenSessionRequest) returns (Session);
 
+  // Make a standalone HTTP request with a selected browser network profile.
+  rpc EmulateBrowserRequest(EmulateBrowserRequestRequest) returns (EmulateBrowserResponse);
+
   // Navigate drives the session to a URL.
   rpc Navigate(NavigateRequest) returns (NavigateResponse);
 
@@ -125,6 +128,31 @@ message Session {
   // stream. Neither is told an address, and neither needs one.
   string status = 6;
   int64 started_at = 7;
+}
+
+message HttpHeader {
+  string name = 1;
+  bytes value = 2;
+}
+
+message EmulateBrowserRequestRequest {
+  string browser = 1;
+  uint32 browser_version = 2;
+  string os = 3;
+  string method = 4;
+  string url = 5;
+  repeated HttpHeader headers = 6;
+  optional bytes payload = 7;
+  // A literal HTTP(S) proxy URL or a pool shorthand such as
+  // resid_long.dataimpulse.DE. The control plane resolves the shorthand within
+  // the caller's organization before the browser service starts.
+  string proxy_url = 8;
+}
+
+message EmulateBrowserResponse {
+  uint32 status = 1;
+  repeated HttpHeader headers = 2;
+  bytes body = 3;
 }
 
 // Every command names its session and is its own message, shaped after the
